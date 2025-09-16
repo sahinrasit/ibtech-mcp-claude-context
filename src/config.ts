@@ -25,6 +25,19 @@ export interface ContextMcpConfig {
     reposBasePath?: string; // Base path for repos folder (default: ~/repos)
     defaultProject?: string; // Default project name
     defaultBranch?: string; // Default branch name
+    // HTTP Transport configuration
+    transport?: {
+        type: 'stdio' | 'http';
+        http?: {
+            port?: number;
+            host?: string;
+            enableJsonResponse?: boolean;
+            allowedHosts?: string[];
+            allowedOrigins?: string[];
+            enableDnsRebindingProtection?: boolean;
+            headers?: Record<string, string>;
+        };
+    };
 }
 
 // Legacy format (v1) - for backward compatibility
@@ -120,28 +133,43 @@ export function createMcpConfig(): ContextMcpConfig {
     console.log(`[DEBUG]   MILVUS_ADDRESS: ${envManager.get('MILVUS_ADDRESS') || 'NOT SET'}`);
     console.log(`[DEBUG]   NODE_ENV: ${envManager.get('NODE_ENV') || 'NOT SET'}`);
 
+    const transportType = (envManager.get('MCP_TRANSPORT_TYPE') as 'stdio' | 'http') || 'stdio';
+    
     const config: ContextMcpConfig = {
         name: envManager.get('MCP_SERVER_NAME') || "Context MCP Server",
         version: envManager.get('MCP_SERVER_VERSION') || "1.0.0",
-        // Embedding provider configuration
-        embeddingProvider: (envManager.get('EMBEDDING_PROVIDER') as 'OpenAI' | 'VoyageAI' | 'Gemini' | 'Ollama') || 'OpenAI',
-        embeddingModel: getEmbeddingModelForProvider(envManager.get('EMBEDDING_PROVIDER') || 'OpenAI'),
-        // Provider-specific API keys
-        openaiApiKey: envManager.get('OPENAI_API_KEY'),
-        openaiBaseUrl: envManager.get('OPENAI_BASE_URL'),
+        // Embedding provider configuration - HTTP transport'ta header'lardan alınacak
+        embeddingProvider: transportType === 'http' ? 'OpenAI' : (envManager.get('EMBEDDING_PROVIDER') as 'OpenAI' | 'VoyageAI' | 'Gemini' | 'Ollama') || 'OpenAI',
+        embeddingModel: transportType === 'http' ? 'text-embedding-3-small' : getEmbeddingModelForProvider(envManager.get('EMBEDDING_PROVIDER') || 'OpenAI'),
+        // Provider-specific API keys - HTTP transport'ta header'lardan alınacak
+        openaiApiKey: transportType === 'http' ? 'placeholder' : envManager.get('OPENAI_API_KEY'),
+        openaiBaseUrl: transportType === 'http' ? 'https://api.openai.com/v1' : envManager.get('OPENAI_BASE_URL'),
         voyageaiApiKey: envManager.get('VOYAGEAI_API_KEY'),
         geminiApiKey: envManager.get('GEMINI_API_KEY'),
         geminiBaseUrl: envManager.get('GEMINI_BASE_URL'),
         // Ollama configuration
         ollamaModel: envManager.get('OLLAMA_MODEL'),
         ollamaHost: envManager.get('OLLAMA_HOST'),
-        // Vector database configuration - address can be auto-resolved from token
-        milvusAddress: envManager.get('MILVUS_ADDRESS'), // Optional, can be resolved from token
-        milvusToken: envManager.get('MILVUS_TOKEN'),
-        // Project structure configuration
+        // Vector database configuration - HTTP transport'ta header'lardan alınacak
+        milvusAddress: transportType === 'http' ? 'placeholder' : envManager.get('MILVUS_ADDRESS'),
+        milvusToken: transportType === 'http' ? 'placeholder' : envManager.get('MILVUS_TOKEN'),
+        // Project structure configuration - HTTP transport'ta header'lardan alınacak
         reposBasePath: path.join(process.cwd(), 'repos'), // Always use ./repos in project directory
-        defaultProject: envManager.get('DEFAULT_PROJECT'),
-        defaultBranch: envManager.get('DEFAULT_BRANCH') || 'prod'
+        defaultProject: transportType === 'http' ? 'mobilebanking' : envManager.get('DEFAULT_PROJECT'),
+        defaultBranch: transportType === 'http' ? 'prod' : envManager.get('DEFAULT_BRANCH') || 'prod',
+        // HTTP Transport configuration
+        transport: {
+            type: transportType,
+            http: {
+                port: parseInt(envManager.get('MCP_HTTP_PORT') || '3000'),
+                host: envManager.get('MCP_HTTP_HOST') || 'localhost',
+                enableJsonResponse: envManager.get('MCP_HTTP_JSON_RESPONSE') === 'true',
+                allowedHosts: envManager.get('MCP_HTTP_ALLOWED_HOSTS')?.split(',').map(h => h.trim()),
+                allowedOrigins: envManager.get('MCP_HTTP_ALLOWED_ORIGINS')?.split(',').map(o => o.trim()),
+                enableDnsRebindingProtection: envManager.get('MCP_HTTP_DNS_REBINDING_PROTECTION') === 'true',
+                headers: envManager.get('MCP_HTTP_HEADERS') ? JSON.parse(envManager.get('MCP_HTTP_HEADERS')!) : undefined
+            }
+        }
     };
 
     return config;
@@ -235,6 +263,22 @@ export function logConfigurationSummary(config: ContextMcpConfig): void {
     console.log(`[MCP] 🚀 Starting Context MCP Server`);
     console.log(`[MCP] Configuration Summary:`);
     console.log(`[MCP]   Server: ${config.name} v${config.version}`);
+    console.log(`[MCP]   Transport: ${config.transport?.type || 'stdio'}`);
+    
+    if (config.transport?.type === 'http' && config.transport.http) {
+        console.log(`[MCP]   HTTP Server: ${config.transport.http.host}:${config.transport.http.port}`);
+        console.log(`[MCP]   JSON Response: ${config.transport.http.enableJsonResponse ? 'Enabled' : 'Disabled (SSE)'}`);
+        if (config.transport.http.allowedHosts?.length) {
+            console.log(`[MCP]   Allowed Hosts: ${config.transport.http.allowedHosts.join(', ')}`);
+        }
+        if (config.transport.http.allowedOrigins?.length) {
+            console.log(`[MCP]   Allowed Origins: ${config.transport.http.allowedOrigins.join(', ')}`);
+        }
+        if (config.transport.http.headers) {
+            console.log(`[MCP]   Custom Headers: ${Object.keys(config.transport.http.headers).length} configured`);
+        }
+    }
+    
     console.log(`[MCP]   Embedding Provider: ${config.embeddingProvider}`);
     console.log(`[MCP]   Embedding Model: ${config.embeddingModel}`);
     console.log(`[MCP]   Milvus Address: ${config.milvusAddress || (config.milvusToken ? '[Auto-resolve from token]' : '[Not configured]')}`);
@@ -278,6 +322,16 @@ Environment Variables:
   MCP_SERVER_NAME         Server name
   MCP_SERVER_VERSION      Server version
   
+  Transport Configuration:
+  MCP_TRANSPORT_TYPE      Transport type: stdio, http (default: stdio)
+  MCP_HTTP_PORT           HTTP server port (default: 3000)
+  MCP_HTTP_HOST           HTTP server host (default: localhost)
+  MCP_HTTP_JSON_RESPONSE  Enable JSON responses instead of SSE (default: false)
+  MCP_HTTP_ALLOWED_HOSTS  Comma-separated list of allowed hosts for DNS rebinding protection
+  MCP_HTTP_ALLOWED_ORIGINS Comma-separated list of allowed origins for DNS rebinding protection
+  MCP_HTTP_DNS_REBINDING_PROTECTION Enable DNS rebinding protection (default: false)
+  MCP_HTTP_HEADERS        JSON string of custom headers to include in responses
+  
   Embedding Provider Configuration:
   EMBEDDING_PROVIDER      Embedding provider: OpenAI, VoyageAI, Gemini, Ollama (default: OpenAI)
   EMBEDDING_MODEL         Embedding model name (works for all providers)
@@ -298,22 +352,22 @@ Environment Variables:
   MILVUS_TOKEN            Milvus token (optional, used for authentication and address resolution)
 
 Examples:
-  # Start MCP server with OpenAI (default) and explicit Milvus address
+  # Start MCP server with stdio transport (default)
   OPENAI_API_KEY=sk-xxx MILVUS_ADDRESS=localhost:19530 npx @zilliz/claude-context-mcp@latest
   
-  # Start MCP server with OpenAI and specific model
-  OPENAI_API_KEY=sk-xxx EMBEDDING_MODEL=text-embedding-3-large MILVUS_TOKEN=your-token npx @zilliz/claude-context-mcp@latest
+  # Start MCP server with HTTP transport on port 3000
+  MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3000 OPENAI_API_KEY=sk-xxx MILVUS_TOKEN=your-token npx @zilliz/claude-context-mcp@latest
   
-  # Start MCP server with VoyageAI and specific model
-  EMBEDDING_PROVIDER=VoyageAI VOYAGEAI_API_KEY=pa-xxx EMBEDDING_MODEL=voyage-3-large MILVUS_TOKEN=your-token npx @zilliz/claude-context-mcp@latest
+  # Start MCP server with HTTP transport and custom headers
+  MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=8080 MCP_HTTP_HEADERS='{"X-API-Key":"your-api-key","X-Custom-Header":"value"}' OPENAI_API_KEY=sk-xxx MILVUS_TOKEN=your-token npx @zilliz/claude-context-mcp@latest
   
-  # Start MCP server with Gemini and specific model
-  EMBEDDING_PROVIDER=Gemini GEMINI_API_KEY=xxx EMBEDDING_MODEL=gemini-embedding-001 MILVUS_TOKEN=your-token npx @zilliz/claude-context-mcp@latest
+  # Start MCP server with HTTP transport and DNS rebinding protection
+  MCP_TRANSPORT_TYPE=http MCP_HTTP_ALLOWED_HOSTS=localhost,127.0.0.1 MCP_HTTP_DNS_REBINDING_PROTECTION=true OPENAI_API_KEY=sk-xxx MILVUS_TOKEN=your-token npx @zilliz/claude-context-mcp@latest
   
-  # Start MCP server with Ollama and specific model (using OLLAMA_MODEL)
-  EMBEDDING_PROVIDER=Ollama OLLAMA_MODEL=mxbai-embed-large MILVUS_TOKEN=your-token npx @zilliz/claude-context-mcp@latest
+  # Start MCP server with VoyageAI and HTTP transport
+  MCP_TRANSPORT_TYPE=http EMBEDDING_PROVIDER=VoyageAI VOYAGEAI_API_KEY=pa-xxx EMBEDDING_MODEL=voyage-3-large MILVUS_TOKEN=your-token npx @zilliz/claude-context-mcp@latest
   
-  # Start MCP server with Ollama and specific model (using EMBEDDING_MODEL)
-  EMBEDDING_PROVIDER=Ollama EMBEDDING_MODEL=nomic-embed-text MILVUS_TOKEN=your-token npx @zilliz/claude-context-mcp@latest
+  # Start MCP server with Ollama and HTTP transport
+  MCP_TRANSPORT_TYPE=http EMBEDDING_PROVIDER=Ollama OLLAMA_MODEL=mxbai-embed-large MILVUS_TOKEN=your-token npx @zilliz/claude-context-mcp@latest
         `);
 } 

@@ -7,7 +7,7 @@ export function createEmbeddingInstance(config: ContextMcpConfig): OpenAIEmbeddi
 
     switch (config.embeddingProvider) {
         case 'OpenAI':
-            if (!config.openaiApiKey) {
+            if (!config.openaiApiKey || config.openaiApiKey === 'placeholder') {
                 console.error(`[EMBEDDING] ❌ OpenAI API key is required but not provided`);
                 throw new Error('OPENAI_API_KEY is required for OpenAI embedding provider');
             }

@@ -7,13 +7,13 @@ import { ensureAbsolutePath, truncateContent, trackCodebasePath } from "./utils.
 import { ContextMcpConfig } from "./config.js";
 
 export class ToolHandlers {
-    private context: Context;
+    private context: Context | null;
     private snapshotManager: SnapshotManager;
     private config: ContextMcpConfig;
     private indexingStats: { indexedFiles: number; totalChunks: number } | null = null;
     private currentWorkspace: string;
 
-    constructor(context: Context, snapshotManager: SnapshotManager, config: ContextMcpConfig) {
+    constructor(context: Context | null, snapshotManager: SnapshotManager, config: ContextMcpConfig) {
         this.context = context;
         this.snapshotManager = snapshotManager;
         this.config = config;
@@ -34,6 +34,12 @@ export class ToolHandlers {
     private async syncIndexedCodebasesFromCloud(): Promise<void> {
         try {
             console.log(`[SYNC-CLOUD] 🔄 Syncing indexed codebases from Zilliz Cloud...`);
+
+            // Check if context is initialized
+            if (!this.context) {
+                console.log(`[SYNC-CLOUD] ⚠️ Context not initialized, skipping cloud sync`);
+                return;
+            }
 
             // Get all collections using the interface method
             const vectorDb = this.context.getVectorDatabase();
@@ -151,6 +157,17 @@ export class ToolHandlers {
         const customFileExtensions = customExtensions || [];
         const customIgnorePatterns = ignorePatterns || [];
         
+        // Check if context is initialized
+        if (!this.context) {
+            return {
+                content: [{
+                    type: "text",
+                    text: `❌ Context not initialized. Please ensure embedding provider and vector database are properly configured.`
+                }],
+                isError: true
+            };
+        }
+        
         // Use default project and branch from config
         const projectName = this.config.defaultProject;
         const branch = this.config.defaultBranch || 'prod';
@@ -224,7 +241,7 @@ export class ToolHandlers {
             }
 
             //Check if the snapshot and cloud index are in sync
-            if (this.snapshotManager.getIndexedCodebases().includes(absolutePath) !== await this.context.hasIndex(absolutePath)) {
+            if (this.context && this.snapshotManager.getIndexedCodebases().includes(absolutePath) !== await this.context.hasIndex(absolutePath)) {
                 console.warn(`[INDEX-VALIDATION] ❌ Snapshot and cloud index mismatch: ${absolutePath}`);
             }
 
@@ -245,7 +262,7 @@ export class ToolHandlers {
                     console.log(`[FORCE-REINDEX] 🔄 Removing '${absolutePath}' from indexed list for re-indexing`);
                     this.snapshotManager.removeIndexedCodebase(absolutePath);
                 }
-                if (await this.context.hasIndex(absolutePath)) {
+                if (this.context && await this.context.hasIndex(absolutePath)) {
                     console.log(`[FORCE-REINDEX] 🔄 Clearing index for '${absolutePath}'`);
                     await this.context.clearIndex(absolutePath);
                 }
@@ -255,11 +272,11 @@ export class ToolHandlers {
             try {
                 console.log(`[INDEX-VALIDATION] 🔍 Validating collection creation capability`);
                 console.log(`[INDEX-VALIDATION] 🔍 Vector DB info:`, {
-                    type: this.context.getVectorDatabase().constructor.name,
-                    hasVectorDB: !!this.context.getVectorDatabase()
+                    type: this.context?.getVectorDatabase().constructor.name || 'null',
+                    hasVectorDB: !!this.context?.getVectorDatabase()
                 });
                 
-                const canCreateCollection = await this.context.getVectorDatabase().checkCollectionLimit();
+                const canCreateCollection = this.context ? await this.context.getVectorDatabase().checkCollectionLimit() : false;
 
                 if (!canCreateCollection) {
                     console.error(`[INDEX-VALIDATION] ❌ Collection limit validation failed: ${absolutePath}`);
@@ -315,13 +332,13 @@ export class ToolHandlers {
             }
 
             // Add custom extensions if provided
-            if (customFileExtensions.length > 0) {
+            if (customFileExtensions.length > 0 && this.context) {
                 console.log(`[CUSTOM-EXTENSIONS] Adding ${customFileExtensions.length} custom extensions: ${customFileExtensions.join(', ')}`);
                 this.context.addCustomExtensions(customFileExtensions);
             }
 
             // Add custom ignore patterns if provided (before loading file-based patterns)
-            if (customIgnorePatterns.length > 0) {
+            if (customIgnorePatterns.length > 0 && this.context) {
                 console.log(`[IGNORE-PATTERNS] Adding ${customIgnorePatterns.length} custom ignore patterns: ${customIgnorePatterns.join(', ')}`);
                 this.context.addCustomIgnorePatterns(customIgnorePatterns);
             }
@@ -396,32 +413,39 @@ export class ToolHandlers {
             }
 
             // Load ignore patterns from files first (including .ignore, .gitignore, etc.)
-            await this.context.getLoadedIgnorePatterns(absolutePath);
+            if (this.context) {
+                await this.context.getLoadedIgnorePatterns(absolutePath);
+            }
 
             // Initialize file synchronizer with proper ignore patterns (including project-specific patterns)
             const { FileSynchronizer } = await import("@zilliz/claude-context-core");
-            const ignorePatterns = this.context.getIgnorePatterns() || [];
+            const ignorePatterns = this.context?.getIgnorePatterns() || [];
             console.log(`[BACKGROUND-INDEX] Using ignore patterns: ${ignorePatterns.join(', ')}`);
             const synchronizer = new FileSynchronizer(absolutePath, ignorePatterns);
             await synchronizer.initialize();
 
             // Store synchronizer in the context (let context manage collection names)
-            await this.context.getPreparedCollection(absolutePath);
-            const collectionName = this.context.getCollectionName(absolutePath);
-            this.context.setSynchronizer(collectionName, synchronizer);
-            if (contextForThisTask !== this.context) {
+            if (this.context) {
+                await this.context.getPreparedCollection(absolutePath);
+                const collectionName = this.context.getCollectionName(absolutePath);
+                this.context.setSynchronizer(collectionName, synchronizer);
+            }
+            if (contextForThisTask !== this.context && this.context && contextForThisTask) {
+                const collectionName = this.context.getCollectionName(absolutePath);
                 contextForThisTask.setSynchronizer(collectionName, synchronizer);
             }
 
             console.log(`[BACKGROUND-INDEX] Starting indexing with ${splitterType} splitter for: ${absolutePath}`);
 
             // Log embedding provider information before indexing
-            const embeddingProvider = this.context.getEmbedding();
-            console.log(`[BACKGROUND-INDEX] 🧠 Using embedding provider: ${embeddingProvider.getProvider()} with dimension: ${embeddingProvider.getDimension()}`);
+            const embeddingProvider = this.context?.getEmbedding();
+            if (embeddingProvider) {
+                console.log(`[BACKGROUND-INDEX] 🧠 Using embedding provider: ${embeddingProvider.getProvider()} with dimension: ${embeddingProvider.getDimension()}`);
+            }
 
             // Start indexing with the appropriate context and progress tracking
             console.log(`[BACKGROUND-INDEX] 🚀 Beginning codebase indexing process...`);
-            const stats = await contextForThisTask.indexCodebase(absolutePath, (progress) => {
+            const stats = await contextForThisTask!.indexCodebase(absolutePath, (progress) => {
                 // Update progress in snapshot manager using new method
                 this.snapshotManager.setCodebaseIndexing(absolutePath, progress.percentage);
 
@@ -472,6 +496,17 @@ export class ToolHandlers {
         const resultLimit = limit || 10;
 
         try {
+            // Check if context is initialized
+            if (!this.context) {
+                return {
+                    content: [{
+                        type: "text",
+                        text: `❌ Context not initialized. Please ensure embedding provider and vector database are properly configured.`
+                    }],
+                    isError: true
+                };
+            }
+
             // Use default project and branch from config
             const projectName = this.config.defaultProject;
             const branch = this.config.defaultBranch || 'prod';
@@ -547,9 +582,11 @@ export class ToolHandlers {
             console.log(`[SEARCH] Indexing status: ${isIndexing ? 'In Progress' : 'Completed'}`);
 
             // Log embedding provider information before search
-            const embeddingProvider = this.context.getEmbedding();
-            console.log(`[SEARCH] 🧠 Using embedding provider: ${embeddingProvider.getProvider()} for search`);
-            console.log(`[SEARCH] 🔍 Generating embeddings for query using ${embeddingProvider.getProvider()}...`);
+            const embeddingProvider = this.context?.getEmbedding();
+            if (embeddingProvider) {
+                console.log(`[SEARCH] 🧠 Using embedding provider: ${embeddingProvider.getProvider()} for search`);
+                console.log(`[SEARCH] 🔍 Generating embeddings for query using ${embeddingProvider.getProvider()}...`);
+            }
 
             // Build filter expression from extensionFilter list
             let filterExpr: string | undefined = undefined;
@@ -570,7 +607,7 @@ export class ToolHandlers {
             }
 
             // Search in the specified codebase
-            const searchResults = await this.context.semanticSearch(
+            const searchResults = await this.context!.semanticSearch(
                 absolutePath,
                 query,
                 Math.min(resultLimit, 50),
@@ -644,6 +681,17 @@ export class ToolHandlers {
     }
 
     public async handleClearIndex(args: any) {
+        // Check if context is initialized
+        if (!this.context) {
+            return {
+                content: [{
+                    type: "text",
+                    text: `❌ Context not initialized. Please ensure embedding provider and vector database are properly configured.`
+                }],
+                isError: true
+            };
+        }
+
         // Use default project and branch from config
         const projectName = this.config.defaultProject;
         const branch = this.config.defaultBranch || 'prod';
@@ -716,7 +764,7 @@ export class ToolHandlers {
             console.log(`[CLEAR] Clearing codebase: ${absolutePath}`);
 
             try {
-                await this.context.clearIndex(absolutePath);
+                await this.context!.clearIndex(absolutePath);
                 console.log(`[CLEAR] Successfully cleared index for: ${absolutePath}`);
             } catch (error: any) {
                 const errorMsg = `Failed to clear ${absolutePath}: ${error.message}`;

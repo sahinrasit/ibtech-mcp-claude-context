@@ -3,11 +3,11 @@ import { Context, FileSynchronizer } from "@zilliz/claude-context-core";
 import { SnapshotManager } from "./snapshot.js";
 
 export class SyncManager {
-    private context: Context;
+    private context: Context | null;
     private snapshotManager: SnapshotManager;
     private isSyncing: boolean = false;
 
-    constructor(context: Context, snapshotManager: SnapshotManager) {
+    constructor(context: Context | null, snapshotManager: SnapshotManager) {
         this.context = context;
         this.snapshotManager = snapshotManager;
     }
@@ -57,6 +57,12 @@ export class SyncManager {
                 }
 
                 try {
+                    // Skip sync if context is not initialized (HTTP transport mode)
+                    if (!this.context) {
+                        console.log(`[SYNC-DEBUG] Skipping sync for '${codebasePath}' - context not initialized (HTTP transport mode)`);
+                        continue;
+                    }
+                    
                     console.log(`[SYNC-DEBUG] Calling context.reindexByChange() for '${codebasePath}'`);
                     const stats = await this.context.reindexByChange(codebasePath);
                     const codebaseElapsed = Date.now() - codebaseStartTime;
