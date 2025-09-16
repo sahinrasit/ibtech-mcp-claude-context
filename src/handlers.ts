@@ -33,6 +33,15 @@ export class ToolHandlers {
      */
     private async syncIndexedCodebasesFromCloud(): Promise<void> {
         try {
+            // Check if using local Milvus - skip cloud sync for local instances
+            const milvusAddress = process.env.MILVUS_ADDRESS || '';
+            const isLocalMilvus = !milvusAddress.includes('https') && !milvusAddress.includes('cloud.zilliz.com');
+
+            if (isLocalMilvus) {
+                console.log(`[SYNC-CLOUD] ⏭️ Skipping cloud sync for local Milvus instance: ${milvusAddress}`);
+                return;
+            }
+
             console.log(`[SYNC-CLOUD] 🔄 Syncing indexed codebases from Zilliz Cloud...`);
 
             // Check if context is initialized
@@ -271,10 +280,8 @@ export class ToolHandlers {
             // CRITICAL: Pre-index collection creation validation
             try {
                 console.log(`[INDEX-VALIDATION] 🔍 Validating collection creation capability`);
-                console.log(`[INDEX-VALIDATION] 🔍 Vector DB info:`, {
-                    type: this.context?.getVectorDatabase().constructor.name || 'null',
-                    hasVectorDB: !!this.context?.getVectorDatabase()
-                });
+                const vectorDB = this.context?.getVectorDatabase();
+                console.log(`[INDEX-VALIDATION] 🔍 Vector DB info: Type=${vectorDB?.constructor.name || 'null'}, Connected=${!!vectorDB}`);
                 
                 const canCreateCollection = this.context ? await this.context.getVectorDatabase().checkCollectionLimit() : false;
 
@@ -401,6 +408,28 @@ export class ToolHandlers {
         try {
             console.log(`[BACKGROUND-INDEX] Starting background indexing for: ${absolutePath}`);
 
+            // Check if directory exists and log its contents
+            const fs = await import('fs');
+            const path = await import('path');
+
+            try {
+                const stats = await fs.promises.stat(absolutePath);
+                console.log(`[PATH-CHECK] 📂 Target path exists: ${absolutePath}`);
+                console.log(`[PATH-CHECK] 📋 Path type: ${stats.isDirectory() ? 'Directory' : 'File'}`);
+
+                if (stats.isDirectory()) {
+                    const entries = await fs.promises.readdir(absolutePath);
+                    console.log(`[PATH-CHECK] 📁 Directory contains ${entries.length} entries`);
+                    if (entries.length > 0) {
+                        const sampleEntries = entries.slice(0, 10);
+                        console.log(`[PATH-CHECK] 📄 Directory contents: ${sampleEntries.join(', ')}${entries.length > 10 ? '...' : ''}`);
+                    }
+                }
+            } catch (pathError) {
+                console.log(`[PATH-CHECK] ❌ Cannot access path: ${absolutePath}`);
+                console.log(`[PATH-CHECK] 💥 Path error:`, pathError);
+            }
+
             // Note: If force reindex, collection was already cleared during validation phase
             if (forceReindex) {
                 console.log(`[BACKGROUND-INDEX] ℹ️  Force reindex mode - collection was already cleared during validation`);
@@ -421,14 +450,44 @@ export class ToolHandlers {
             const { FileSynchronizer } = await import("@zilliz/claude-context-core");
             const ignorePatterns = this.context?.getIgnorePatterns() || [];
             console.log(`[BACKGROUND-INDEX] Using ignore patterns: ${ignorePatterns.join(', ')}`);
+
+            console.log(`[FILE-SCAN] 📁 Initializing file synchronizer for: ${absolutePath}`);
             const synchronizer = new FileSynchronizer(absolutePath, ignorePatterns);
+
+            console.log(`[FILE-SCAN] 🔍 Starting file system scan and merkle tree creation...`);
             await synchronizer.initialize();
+            console.log(`[FILE-SCAN] ✅ File synchronizer initialized successfully`);
+            console.log(`[FILE-SCAN] 💾 Merkle snapshot created/loaded for tracking file changes`);
+
+            // Check for changes to understand what files are detected
+            try {
+                const changes = await synchronizer.checkForChanges();
+                const totalFiles = changes.added.length + changes.modified.length;
+                console.log(`[FILE-SCAN] 📊 Detected ${totalFiles} files for processing`);
+
+                if (changes.added.length > 0) {
+                    const sampleFiles = changes.added.slice(0, 5);
+                    console.log(`[FILE-SCAN] 📄 Sample files: ${sampleFiles.join(', ')}${changes.added.length > 5 ? '...' : ''}`);
+                }
+            } catch (changeError) {
+                console.log(`[FILE-SCAN] ⚠️  Could not check file changes:`, changeError);
+            }
 
             // Store synchronizer in the context (let context manage collection names)
             if (this.context) {
-                await this.context.getPreparedCollection(absolutePath);
-                const collectionName = this.context.getCollectionName(absolutePath);
-                this.context.setSynchronizer(collectionName, synchronizer);
+                console.log(`[COLLECTION] 🔧 Preparing hybrid vector collection for codebase: ${absolutePath}`);
+                try {
+                    await this.context.getPreparedCollection(absolutePath);
+                    console.log(`[COLLECTION] ✅ Collection preparation completed successfully`);
+
+                    const collectionName = this.context.getCollectionName(absolutePath);
+                    console.log(`[COLLECTION] 📝 Collection name generated: ${collectionName}`);
+                    this.context.setSynchronizer(collectionName, synchronizer);
+                } catch (error) {
+                    console.log(`[COLLECTION] ❌ Collection preparation failed:`);
+                    console.log(`[COLLECTION] 💥 Error details:`, error);
+                    throw error;
+                }
             }
             if (contextForThisTask !== this.context && this.context && contextForThisTask) {
                 const collectionName = this.context.getCollectionName(absolutePath);

@@ -75,16 +75,24 @@ class ContextMcpServer {
             logEmbeddingProviderInfo(config, embedding);
 
             // Initialize vector database
+            console.log(`[VECTOR-DB] 🔌 Connecting to vector database at: ${config.milvusAddress}`);
+            console.log(`[VECTOR-DB] 🔑 Token configured: ${config.milvusToken ? 'YES' : 'NO'}`);
+            console.log(`[VECTOR-DB] 📡 Connection type: ${config.milvusAddress?.includes('https') ? 'CLOUD' : 'LOCAL'}`);
+
             const vectorDatabase = new MilvusVectorDatabase({
                 address: config.milvusAddress,
                 ...(config.milvusToken && { token: config.milvusToken })
             });
 
+            console.log(`[VECTOR-DB] ✅ MilvusVectorDatabase instance created`);
+
             // Initialize Claude Context
+            console.log(`[CONTEXT] 🚀 Initializing Claude Context...`);
             this.context = new Context({
                 embedding,
                 vectorDatabase
             });
+            console.log(`[CONTEXT] ✅ Context initialization completed`);
         }
 
         // Initialize managers

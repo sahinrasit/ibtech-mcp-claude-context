@@ -17,6 +17,9 @@ COPY package.json pnpm-lock.yaml* ./
 # Clear npm cache and install fresh
 RUN pnpm install
 
+# Clean any existing build artifacts
+RUN rm -rf dist
+
 COPY . .
 
 RUN pnpm build
