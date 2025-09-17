@@ -1,22 +1,7 @@
 #!/usr/bin/env node
 
-// CRITICAL: Redirect console outputs to stderr IMMEDIATELY to avoid interfering with MCP JSON protocol
-// Only MCP protocol messages should go to stdout
-const originalConsoleLog = console.log;
-const originalConsoleWarn = console.warn;
-
-console.log = (...args: any[]) => {
-    process.stderr.write('[LOG] ' + args.join(' ') + '\n');
-};
-
-console.warn = (...args: any[]) => {
-    process.stderr.write('[WARN] ' + args.join(' ') + '\n');
-};
-
-// console.error already goes to stderr by default
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
     ListToolsRequestSchema,
@@ -62,30 +47,9 @@ class ContextMcpServer {
         );
 
         // Initialize embedding provider and vector database based on transport type
-        if (config.transport?.type === 'http') {
-            // HTTP transport'ta lazy initialization (API key'ler header'lardan gelecek)
-            console.log(`[EMBEDDING] HTTP transport mode - lazy initialization from headers`);
-            this.context = null; // Will be initialized when first request comes
-        } else {
-            // Stdio transport'ta normal şekilde başlat
-            console.log(`[EMBEDDING] Initializing embedding provider: ${config.embeddingProvider}`);
-            console.log(`[EMBEDDING] Using model: ${config.embeddingModel}`);
-
-            const embedding = createEmbeddingInstance(config);
-            logEmbeddingProviderInfo(config, embedding);
-
-            // Initialize vector database
-            const vectorDatabase = new MilvusVectorDatabase({
-                address: config.milvusAddress,
-                ...(config.milvusToken && { token: config.milvusToken })
-            });
-
-            // Initialize Claude Context
-            this.context = new Context({
-                embedding,
-                vectorDatabase
-            });
-        }
+        // HTTP transport'ta lazy initialization (API key'ler header'lardan gelecek)
+        console.log(`[EMBEDDING] HTTP transport mode - lazy initialization from headers`);
+        this.context = null; // Will be initialized when first request comes
 
         // Initialize managers
         this.snapshotManager = new SnapshotManager();
@@ -309,26 +273,12 @@ This tool is versatile and can be used for various company document searches:
         console.log('[SYNC-DEBUG] MCP server start() method called');
         console.log('Starting Context MCP server...');
 
-        const config = this.getConfig();
-        
-        if (config.transport?.type === 'http') {
-            await this.startHttpServer();
-        } else {
-            await this.startStdioServer();
-        }
+        await this.startHttpServer();
 
         // Stateless design - no background sync needed
         console.log('[SYNC-DEBUG] Stateless MCP server initialization complete');
     }
 
-    private async startStdioServer() {
-        const transport = new StdioServerTransport();
-        console.log('[SYNC-DEBUG] StdioServerTransport created, attempting server connection...');
-
-        await this.server.connect(transport);
-        console.log("MCP server started and listening on stdio.");
-        console.log('[SYNC-DEBUG] Server connection established successfully');
-    }
 
     private async startHttpServer() {
         const config = this.getConfig();
