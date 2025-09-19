@@ -16,7 +16,6 @@ console.warn = (...args: any[]) => {
 // console.error already goes to stderr by default
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
     ListToolsRequestSchema,
@@ -61,39 +60,10 @@ class ContextMcpServer {
             }
         );
 
-        // Initialize embedding provider and vector database based on transport type
-        if (config.transport?.type === 'http') {
-            // HTTP transport'ta lazy initialization (API key'ler header'lardan gelecek)
-            console.log(`[EMBEDDING] HTTP transport mode - lazy initialization from headers`);
-            this.context = null; // Will be initialized when first request comes
-        } else {
-            // Stdio transport'ta normal şekilde başlat
-            console.log(`[EMBEDDING] Initializing embedding provider: ${config.embeddingProvider}`);
-            console.log(`[EMBEDDING] Using model: ${config.embeddingModel}`);
-
-            const embedding = createEmbeddingInstance(config);
-            logEmbeddingProviderInfo(config, embedding);
-
-            // Initialize vector database
-            console.log(`[VECTOR-DB] 🔌 Connecting to vector database at: ${config.milvusAddress}`);
-            console.log(`[VECTOR-DB] 🔑 Token configured: ${config.milvusToken ? 'YES' : 'NO'}`);
-            console.log(`[VECTOR-DB] 📡 Connection type: ${config.milvusAddress?.includes('https') ? 'CLOUD' : 'LOCAL'}`);
-
-            const vectorDatabase = new MilvusVectorDatabase({
-                address: config.milvusAddress,
-                ...(config.milvusToken && { token: config.milvusToken })
-            });
-
-            console.log(`[VECTOR-DB] ✅ MilvusVectorDatabase instance created`);
-
-            // Initialize Claude Context
-            console.log(`[CONTEXT] 🚀 Initializing Claude Context...`);
-            this.context = new Context({
-                embedding,
-                vectorDatabase
-            });
-            console.log(`[CONTEXT] ✅ Context initialization completed`);
-        }
+        // HTTP transport mode - lazy initialization
+        console.log(`[EMBEDDING] HTTP transport mode - lazy initialization from environment`);
+        this.context = null; // Will be initialized when first request comes
+        console.log(`[CONTEXT] ✅ Context initialization completed`);
 
         // Initialize managers
         this.snapshotManager = new SnapshotManager();
@@ -319,24 +289,12 @@ This tool is versatile and can be used for various company document searches:
 
         const config = this.getConfig();
         
-        if (config.transport?.type === 'http') {
-            await this.startHttpServer();
-        } else {
-            await this.startStdioServer();
-        }
+        await this.startHttpServer();
 
         // Stateless design - no background sync needed
         console.log('[SYNC-DEBUG] Stateless MCP server initialization complete');
     }
 
-    private async startStdioServer() {
-        const transport = new StdioServerTransport();
-        console.log('[SYNC-DEBUG] StdioServerTransport created, attempting server connection...');
-
-        await this.server.connect(transport);
-        console.log("MCP server started and listening on stdio.");
-        console.log('[SYNC-DEBUG] Server connection established successfully');
-    }
 
     private async startHttpServer() {
         const config = this.getConfig();
@@ -363,27 +321,9 @@ This tool is versatile and can be used for various company document searches:
 
         // Add parameter extraction middleware for HTTP transport
         app.use((req: Request, res: Response, next: NextFunction) => {
-            // Extract parameters from headers and set as environment variables
+            // Extract only project/branch parameters from headers
             const headers = req.headers;
-            
-            if (headers['x-embedding-provider']) {
-                process.env.EMBEDDING_PROVIDER = headers['x-embedding-provider'] as string;
-            }
-            if (headers['x-embedding-model']) {
-                process.env.EMBEDDING_MODEL = headers['x-embedding-model'] as string;
-            }
-            if (headers['x-openai-api-key']) {
-                process.env.OPENAI_API_KEY = headers['x-openai-api-key'] as string;
-            }
-            if (headers['x-openai-base-url']) {
-                process.env.OPENAI_BASE_URL = headers['x-openai-base-url'] as string;
-            }
-            if (headers['x-milvus-address']) {
-                process.env.MILVUS_ADDRESS = headers['x-milvus-address'] as string;
-            }
-            if (headers['x-milvus-token']) {
-                process.env.MILVUS_TOKEN = headers['x-milvus-token'] as string;
-            }
+
             if (headers['x-default-project']) {
                 process.env.DEFAULT_PROJECT = headers['x-default-project'] as string;
             }
@@ -680,34 +620,6 @@ This tool is versatile and can be used for various company document searches:
         return this.config;
     }
 
-    private initializeGlobalContext(config: ContextMcpConfig): void {
-        // Initialize global context for shared codebase (HTTP transport)
-        console.log(`[EMBEDDING] Initializing global context for shared codebase...`);
-        try {
-            const embedding = createEmbeddingInstance({
-                embeddingProvider: 'OpenAI',
-                embeddingModel: 'text-embedding-3-small',
-                openaiApiKey: 'placeholder', // Will be set from headers
-                openaiBaseUrl: 'https://api.openai.com/v1',
-                milvusAddress: 'placeholder', // Will be set from headers
-                milvusToken: 'placeholder'
-            } as ContextMcpConfig);
-            
-            const vectorDatabase = new MilvusVectorDatabase({
-                address: 'placeholder', // Will be set from headers
-                token: 'placeholder'
-            });
-            
-            this.context = new Context({
-                embedding,
-                vectorDatabase
-            });
-            
-            console.log(`[EMBEDDING] ✅ Global context initialized successfully`);
-        } catch (error) {
-            console.error(`[EMBEDDING] ❌ Failed to initialize global context:`, error);
-        }
-    }
 
 
 }

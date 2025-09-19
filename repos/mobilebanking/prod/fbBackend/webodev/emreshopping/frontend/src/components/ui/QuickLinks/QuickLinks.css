@@ -1,0 +1,34 @@
+.quick-links-section {
+  padding: 2rem 0;
+}
+
+.quick-links-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+  padding: 0 1rem;
+}
+
+.quick-link-card {
+  background-color: #ff6b00;
+  color: white;
+  text-decoration: none;
+  padding: 1.5rem;
+  border-radius: 8px;
+  transition: transform 0.2s ease;
+}
+
+.quick-link-card:hover {
+  transform: translateY(-5px);
+}
+
+.quick-link-content h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.2rem;
+}
+
+.quick-link-content p {
+  margin: 0;
+  font-size: 0.9rem;
+  opacity: 0.9;
+} 

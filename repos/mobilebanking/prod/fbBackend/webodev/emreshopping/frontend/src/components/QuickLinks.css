@@ -1,0 +1,45 @@
+.quick-links-container {
+  padding: 20px;
+  background-color: #ffffff;
+}
+
+.quick-links-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: center;
+}
+
+.quick-link-card {
+  width: 100px;
+  height: 100px;
+  background-color: orange; /* veya #ff6200 (Hepsiburada turuncusu) */
+  border-radius: 10px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  transition: transform 0.2s;
+  color: #fff; /* Yazılar turuncu zeminde beyaz olacak şekilde */
+}
+
+.quick-link-card:hover {
+  transform: scale(1.05);
+}
+
+.quick-link-img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  margin-bottom: 6px;
+}
+
+.quick-link-title {
+  color: #fff;
+  font-size: 12px;
+  font-weight: bold;
+}

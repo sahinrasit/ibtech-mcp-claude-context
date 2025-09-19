@@ -1,5 +1,4 @@
 import { Embedding, EmbeddingVector } from "@zilliz/claude-context-core";
-import https from 'https';
  
 export interface IbthinkEmbeddingConfig {
     model: string;

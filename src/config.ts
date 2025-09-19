@@ -30,7 +30,7 @@ export interface ContextMcpConfig {
     defaultBranch?: string; // Default branch name
     // HTTP Transport configuration
     transport?: {
-        type: 'stdio' | 'http';
+        type: 'http';
         http?: {
             port?: number;
             host?: string;
@@ -139,7 +139,7 @@ export function createMcpConfig(): ContextMcpConfig {
     console.log(`[DEBUG]   MILVUS_ADDRESS: ${envManager.get('MILVUS_ADDRESS') || 'NOT SET'}`);
     console.log(`[DEBUG]   NODE_ENV: ${envManager.get('NODE_ENV') || 'NOT SET'}`);
  
-    const transportType = (envManager.get('MCP_TRANSPORT_TYPE') as 'stdio' | 'http') || 'stdio';
+    const transportType = 'http';
    
     const config: ContextMcpConfig = {
         name: envManager.get('MCP_SERVER_NAME') || "Context MCP Server",
@@ -147,9 +147,9 @@ export function createMcpConfig(): ContextMcpConfig {
         // Embedding provider configuration - HTTP transport'ta da environment variable'lardan alınacak
         embeddingProvider: (envManager.get('EMBEDDING_PROVIDER') as 'OpenAI' | 'VoyageAI' | 'Gemini' | 'Ollama' | 'Ibthink') || 'OpenAI',
         embeddingModel: getEmbeddingModelForProvider(envManager.get('EMBEDDING_PROVIDER') || 'OpenAI'),
-        // Provider-specific API keys - HTTP transport'ta header'lardan alınacak
-        openaiApiKey: transportType === 'http' ? 'placeholder' : envManager.get('OPENAI_API_KEY'),
-        openaiBaseUrl: transportType === 'http' ? 'https://api.openai.com/v1' : envManager.get('OPENAI_BASE_URL'),
+        // Provider-specific API keys - environment variable'lardan alınacak
+        openaiApiKey: envManager.get('OPENAI_API_KEY'),
+        openaiBaseUrl: envManager.get('OPENAI_BASE_URL'),
         voyageaiApiKey: envManager.get('VOYAGEAI_API_KEY'),
         geminiApiKey: envManager.get('GEMINI_API_KEY'),
         geminiBaseUrl: envManager.get('GEMINI_BASE_URL'),
