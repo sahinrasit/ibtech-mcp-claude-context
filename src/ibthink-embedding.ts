@@ -26,7 +26,7 @@ export class IbthinkEmbedding extends Embedding {
     constructor(config: IbthinkEmbeddingConfig) {
         super();
         this.config = config;
-        this.dimension = 1536; // Default dimension for text-embedding-ada-002
+        this.dimension = 0; // Will be detected from actual API response
        
         // SSL sertifika sorunu için global ayar
         if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
@@ -37,19 +37,22 @@ export class IbthinkEmbedding extends Embedding {
     }
  
     async detectDimension(testText?: string): Promise<number> {
-        if (this.dimension) {
+        if (this.dimension > 0) {
             return this.dimension;
         }
  
         const test = testText || "test";
         try {
+            console.log(`[IBTHINK] 🔍 Detecting dimension with test text: "${test}"`);
             const result = await this.embed(test);
             this.dimension = result.dimension;
+            console.log(`[IBTHINK] ✅ Detected actual dimension: ${this.dimension}`);
             return this.dimension;
         } catch (error) {
             console.error(`[IBTHINK] Failed to detect dimension:`, error);
             // Fallback to default dimension
             this.dimension = 1536;
+            console.log(`[IBTHINK] ⚠️ Using fallback dimension: ${this.dimension}`);
             return this.dimension;
         }
     }
@@ -144,6 +147,10 @@ export class IbthinkEmbedding extends Embedding {
     }
  
     getDimension(): number {
+        if (this.dimension === 0) {
+            console.log(`[IBTHINK] ⚠️ Dimension not yet detected, returning default 1536`);
+            return 1536; // Return default for initial calls
+        }
         return this.dimension;
     }
  
