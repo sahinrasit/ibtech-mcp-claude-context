@@ -22,6 +22,7 @@ import {
     CallToolRequestSchema
 } from "@modelcontextprotocol/sdk/types.js";
 import { Context } from "@zilliz/claude-context-core";
+import { CustomContext } from "./custom-context.js";
 import { MilvusVectorDatabase } from "@zilliz/claude-context-core";
 import * as http from "http";
 import express, { Request, Response, NextFunction } from "express";
@@ -332,7 +333,8 @@ This tool is versatile and can be used for various company document searches:
             }
             
             // Initialize context if not already initialized (lazy initialization)
-            if (!this.context && process.env.OPENAI_API_KEY && process.env.MILVUS_ADDRESS) {
+            const hasApiKey = process.env.OPENAI_API_KEY || process.env.IBTHINK_API_KEY || process.env.VOYAGEAI_API_KEY || process.env.GEMINI_API_KEY;
+            if (!this.context && hasApiKey && process.env.MILVUS_ADDRESS) {
                 console.log(`[EMBEDDING] Initializing context from headers...`);
                 try {
                     const embedding = createEmbeddingInstance({
@@ -340,6 +342,11 @@ This tool is versatile and can be used for various company document searches:
                         embeddingModel: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
                         openaiApiKey: process.env.OPENAI_API_KEY,
                         openaiBaseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+                        ibthinkApiKey: process.env.IBTHINK_API_KEY,
+                        ibthinkBaseUrl: process.env.IBTHINK_BASE_URL,
+                        voyageaiApiKey: process.env.VOYAGEAI_API_KEY,
+                        geminiApiKey: process.env.GEMINI_API_KEY,
+                        geminiBaseUrl: process.env.GEMINI_BASE_URL,
                         milvusAddress: process.env.MILVUS_ADDRESS,
                         milvusToken: process.env.MILVUS_TOKEN
                     } as ContextMcpConfig);
@@ -349,7 +356,7 @@ This tool is versatile and can be used for various company document searches:
                         ...(process.env.MILVUS_TOKEN && { token: process.env.MILVUS_TOKEN })
                     });
                     
-                    this.context = new Context({
+                    this.context = new CustomContext({
                         embedding,
                         vectorDatabase
                     });
@@ -377,7 +384,8 @@ This tool is versatile and can be used for various company document searches:
                 console.log(`[HTTP] Handling stateless MCP request - Method: ${req.method}`);
                 
                 // Ensure context is initialized for each request
-                if (!this.context && process.env.OPENAI_API_KEY && process.env.MILVUS_ADDRESS) {
+                const hasApiKey = process.env.OPENAI_API_KEY || process.env.IBTHINK_API_KEY || process.env.VOYAGEAI_API_KEY || process.env.GEMINI_API_KEY;
+                if (!this.context && hasApiKey && process.env.MILVUS_ADDRESS) {
                     console.log(`[EMBEDDING] Ensuring context initialization for request...`);
                     try {
                         const embedding = createEmbeddingInstance({
@@ -385,6 +393,11 @@ This tool is versatile and can be used for various company document searches:
                             embeddingModel: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
                             openaiApiKey: process.env.OPENAI_API_KEY,
                             openaiBaseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+                            ibthinkApiKey: process.env.IBTHINK_API_KEY,
+                            ibthinkBaseUrl: process.env.IBTHINK_BASE_URL,
+                            voyageaiApiKey: process.env.VOYAGEAI_API_KEY,
+                            geminiApiKey: process.env.GEMINI_API_KEY,
+                            geminiBaseUrl: process.env.GEMINI_BASE_URL,
                             milvusAddress: process.env.MILVUS_ADDRESS,
                             milvusToken: process.env.MILVUS_TOKEN
                         } as ContextMcpConfig);
@@ -394,7 +407,7 @@ This tool is versatile and can be used for various company document searches:
                             ...(process.env.MILVUS_TOKEN && { token: process.env.MILVUS_TOKEN })
                         });
                         
-                        this.context = new Context({
+                        this.context = new CustomContext({
                             embedding,
                             vectorDatabase
                         });

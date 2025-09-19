@@ -152,6 +152,14 @@ export class IbthinkEmbedding extends Embedding {
     }
  
     /**
+     * Get current model name
+     * @returns Current model name
+     */
+    getModel(): string {
+        return this.config.model;
+    }
+
+    /**
      * Set model type
      * @param model Model name
      */
