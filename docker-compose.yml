@@ -1,29 +1,32 @@
 version: '3.8'
-
+ 
 services:
   etcd:
     container_name: milvus-etcd
-    image: quay.io/coreos/etcd:v3.5.12
+    image: bitnami/etcd
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
       - ETCD_QUOTA_BACKEND_BYTES=4294967296
       - ETCD_SNAPSHOT_COUNT=50000
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://127.0.0.1:2379
+      - ETCD_DATA_DIR=/etcd
+      - ALLOW_NONE_AUTHENTICATION=yes
     volumes:
       - etcd_data:/etcd
-    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
       interval: 30s
       timeout: 20s
       retries: 3
-
+ 
   minio:
     container_name: milvus-minio
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
     environment:
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     ports:
       - "9001:9001"
       - "9000:9000"
@@ -35,7 +38,7 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
-
+ 
   milvus:
     container_name: milvus-standalone
     image: milvusdb/milvus:v2.5.1
@@ -50,33 +53,43 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 30s
-      start_period: 90s
-      timeout: 20s
-      retries: 3
+      start_period: 120s
+      timeout: 30s
+      retries: 5
     ports:
       - "19530:19530"
       - "9091:9091"
     depends_on:
-      - "etcd"
-      - "minio"
-
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+ 
   mcp-app:
     build: .
     container_name: mcp-app
+    platform: linux/amd64
     ports:
       - "3000:3000"
     environment:
       - MCP_TRANSPORT_TYPE=http
       - MCP_HTTP_PORT=3000
       - MCP_HTTP_HOST=0.0.0.0
+      - EMBEDDING_PROVIDER=Ibthink
+      - EMBEDDING_MODEL=text-embedding-ada-002
+      - IBTHINK_API_KEY=Cash_Management_Payments_Ae_zy7he5
+      - IBTHINK_BASE_URL=https://smg-llm-api.seip-vip-prd-ocpgen11.qnb.com.tr/v1
       - MILVUS_ADDRESS=milvus:19530
       - MILVUS_TOKEN=${MILVUS_TOKEN:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DEFAULT_PROJECT=mobilebanking
+      - DEFAULT_BRANCH=prod
+      - NODE_TLS_REJECT_UNAUTHORIZED=0
     depends_on:
       milvus:
         condition: service_healthy
     restart: unless-stopped
-
+ 
   attu:
     container_name: attu
     image: zilliz/attu:v2.3.6
@@ -86,7 +99,7 @@ services:
       - "8000:3000"
     depends_on:
       - milvus
-
+ 
 volumes:
   etcd_data:
   minio_data:
