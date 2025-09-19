@@ -1,11 +1,12 @@
 import { Context, ContextConfig } from "@zilliz/claude-context-core";
 import { IbthinkEmbedding } from "./ibthink-embedding.js";
+import { OpenAIEmbedding } from "./openai-embedding.js";
 
 /**
- * Custom Context class that extends the core Context with IbthinkEmbedding support
+ * Custom Context class that extends the core Context with custom embedding support
  *
- * Strategy: Instead of reimplementing everything, we temporarily switch embedding
- * to a compatible one for indexing, then switch back
+ * Strategy: Use our own embedding implementations (IbthinkEmbedding, OpenAIEmbedding)
+ * instead of core package's embedding classes for full control
  */
 export class CustomContext extends Context {
 
@@ -21,54 +22,69 @@ export class CustomContext extends Context {
     ) {
         const embedding = this.getEmbedding();
 
-        // Check if it's IbthinkEmbedding - if so, use workaround
+        // Use workaround for our custom embedding implementations
         if (embedding instanceof IbthinkEmbedding) {
-            console.log(`[CUSTOM-INDEX] 🎯 Using workaround for IbthinkEmbedding indexing`);
-            return this.ibthinkIndexWorkaround(codebasePath, progressCallback, forceReindex);
+            console.log(`[CUSTOM-INDEX] 🎯 Using custom indexing for IbthinkEmbedding`);
+            return this.customEmbeddingIndexWorkaround(codebasePath, embedding, progressCallback, forceReindex);
         }
 
-        // For other embedding providers, use the default core implementation
+        if (embedding instanceof OpenAIEmbedding) {
+            console.log(`[CUSTOM-INDEX] 🎯 Using custom indexing for custom OpenAIEmbedding`);
+            return this.customEmbeddingIndexWorkaround(codebasePath, embedding, progressCallback, forceReindex);
+        }
+
+        // For core package embedding providers, use the default implementation
         console.log(`[CUSTOM-INDEX] 🔄 Using core indexing for ${embedding.getProvider()}`);
         return super.indexCodebase(codebasePath, progressCallback, forceReindex);
     }
 
     /**
-     * Workaround for IbthinkEmbedding indexing using embedding swap strategy
+     * Generic workaround for custom embedding implementations
      */
-    private async ibthinkIndexWorkaround(
+    private async customEmbeddingIndexWorkaround(
         codebasePath: string,
+        customEmbedding: IbthinkEmbedding | OpenAIEmbedding,
         progressCallback?: (progress: { phase: string; current: number; total: number; percentage: number }) => void,
         forceReindex?: boolean
     ) {
-        const ibthinkEmbedding = this.getEmbedding() as IbthinkEmbedding;
-        console.log(`[CUSTOM-INDEX] 🚀 Starting IbthinkEmbedding workaround for: ${codebasePath}`);
-        console.log(`[CUSTOM-INDEX] 🧠 Using ${ibthinkEmbedding.getProvider()} with dimension: ${ibthinkEmbedding.getDimension()}`);
+        console.log(`[CUSTOM-INDEX] 🚀 Starting custom embedding indexing for: ${codebasePath}`);
+        console.log(`[CUSTOM-INDEX] 🧠 Using ${customEmbedding.getProvider()} with dimension: ${customEmbedding.getDimension()}`);
 
         try {
-            // Import OpenAI embedding temporarily
-            const { OpenAIEmbedding } = await import("@zilliz/claude-context-core");
+            // Import core OpenAI embedding temporarily for proxy base
+            const { OpenAIEmbedding: CoreOpenAIEmbedding } = await import("@zilliz/claude-context-core");
 
-            // Create a temporary OpenAI embedding instance that will use IbthinkEmbedding under the hood
-            const tempEmbedding = new OpenAIEmbedding({
+            // Create a temporary embedding instance for proxy base
+            const tempEmbedding = new CoreOpenAIEmbedding({
                 apiKey: 'temp',  // Will be overridden
-                model: ibthinkEmbedding.getModel()
+                model: customEmbedding.getModel()
             });
 
-            // Create a proxy that intercepts embedding calls and redirects to IbthinkEmbedding
+            // Create a proxy that intercepts embedding calls and redirects to our custom embedding
             const proxyEmbedding = new Proxy(tempEmbedding, {
                 get: (target, prop) => {
                     // Intercept embed and embedBatch calls
                     if (prop === 'embed') {
-                        return (text: string) => ibthinkEmbedding.embed(text);
+                        return async (text: string) => {
+                            console.log(`[CUSTOM-INDEX] 🧠 Proxy embedding single text (${text.length} chars) via ${customEmbedding.getProvider()}`);
+                            const result = await customEmbedding.embed(text);
+                            console.log(`[CUSTOM-INDEX] ✅ Embedding result: dimension=${result.dimension}`);
+                            return result;
+                        };
                     }
                     if (prop === 'embedBatch') {
-                        return (texts: string[]) => ibthinkEmbedding.embedBatch(texts);
+                        return async (texts: string[]) => {
+                            console.log(`[CUSTOM-INDEX] 🧠 Proxy embedding batch: ${texts.length} texts via ${customEmbedding.getProvider()}`);
+                            const results = await customEmbedding.embedBatch(texts);
+                            console.log(`[CUSTOM-INDEX] ✅ Batch embedding results: ${results.length} vectors, dimensions=${results[0]?.dimension}`);
+                            return results;
+                        };
                     }
                     if (prop === 'getDimension') {
-                        return () => ibthinkEmbedding.getDimension();
+                        return () => customEmbedding.getDimension();
                     }
                     if (prop === 'getProvider') {
-                        return () => ibthinkEmbedding.getProvider();
+                        return () => customEmbedding.getProvider();
                     }
                     // For other properties, use the original target
                     return target[prop as keyof typeof target];
@@ -81,22 +97,21 @@ export class CustomContext extends Context {
             this.updateEmbedding(proxyEmbedding as any);
 
             // Call the core indexing method with our proxy
+            console.log(`[CUSTOM-INDEX] 🎯 Starting core indexing with proxy embedding`);
             const result = await super.indexCodebase(codebasePath, progressCallback, forceReindex);
+            console.log(`[CUSTOM-INDEX] 📊 Indexing result: ${JSON.stringify(result)}`);
 
             // Restore original embedding
-            console.log(`[CUSTOM-INDEX] 🔄 Restoring original IbthinkEmbedding`);
+            console.log(`[CUSTOM-INDEX] 🔄 Restoring original ${customEmbedding.getProvider()} embedding`);
             this.updateEmbedding(originalEmbedding);
 
-            console.log(`[CUSTOM-INDEX] ✅ IbthinkEmbedding workaround completed!`);
+            console.log(`[CUSTOM-INDEX] ✅ Custom ${customEmbedding.getProvider()} indexing completed!`);
             return result;
 
         } catch (error) {
-            console.error(`[CUSTOM-INDEX] ❌ IbthinkEmbedding workaround failed:`, error);
-            // Restore original embedding in case of error
-            if (this.originalIbthinkEmbedding) {
-                this.updateEmbedding(this.originalIbthinkEmbedding);
-            }
+            console.error(`[CUSTOM-INDEX] ❌ Custom ${customEmbedding.getProvider()} indexing failed:`, error);
             throw error;
         }
     }
+
 }

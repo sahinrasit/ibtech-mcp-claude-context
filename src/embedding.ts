@@ -1,6 +1,7 @@
-import { OpenAIEmbedding, VoyageAIEmbedding, GeminiEmbedding, OllamaEmbedding } from "@zilliz/claude-context-core";
+import { VoyageAIEmbedding, GeminiEmbedding, OllamaEmbedding } from "@zilliz/claude-context-core";
 import { ContextMcpConfig } from "./config.js";
 import { IbthinkEmbedding } from "./ibthink-embedding.js";
+import { OpenAIEmbedding } from "./openai-embedding.js";
  
 // Helper function to create embedding instance based on provider
 export function createEmbeddingInstance(config: ContextMcpConfig): OpenAIEmbedding | VoyageAIEmbedding | GeminiEmbedding | OllamaEmbedding | IbthinkEmbedding {
@@ -12,13 +13,13 @@ export function createEmbeddingInstance(config: ContextMcpConfig): OpenAIEmbeddi
                 console.error(`[EMBEDDING] ❌ OpenAI API key is required but not provided`);
                 throw new Error('OPENAI_API_KEY is required for OpenAI embedding provider');
             }
-            console.log(`[EMBEDDING] 🔧 Configuring OpenAI with model: ${config.embeddingModel}`);
+            console.log(`[EMBEDDING] 🔧 Configuring custom OpenAI with model: ${config.embeddingModel}`);
             const openaiEmbedding = new OpenAIEmbedding({
                 apiKey: config.openaiApiKey,
                 model: config.embeddingModel,
                 ...(config.openaiBaseUrl && { baseURL: config.openaiBaseUrl })
             });
-            console.log(`[EMBEDDING] ✅ OpenAI embedding instance created successfully`);
+            console.log(`[EMBEDDING] ✅ Custom OpenAI embedding instance created successfully`);
             return openaiEmbedding;
  
         case 'VoyageAI':
