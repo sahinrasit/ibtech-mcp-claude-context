@@ -1,6 +1,5 @@
 import * as fs from "fs";
 import * as path from "path";
-import * as crypto from "crypto";
 import { Context, COLLECTION_LIMIT_MESSAGE } from "@zilliz/claude-context-core";
 import { SnapshotManager } from "./snapshot.js";
 import { ensureAbsolutePath, truncateContent, trackCodebasePath } from "./utils.js";
@@ -10,7 +9,6 @@ export class ToolHandlers {
     private context: Context | null;
     private snapshotManager: SnapshotManager;
     private config: ContextMcpConfig;
-    private indexingStats: { indexedFiles: number; totalChunks: number } | null = null;
     private currentWorkspace: string;
 
     constructor(context: Context | null, snapshotManager: SnapshotManager, config: ContextMcpConfig) {
@@ -19,6 +17,33 @@ export class ToolHandlers {
         this.config = config;
         this.currentWorkspace = process.cwd();
         console.log(`[WORKSPACE] Current workspace: ${this.currentWorkspace}`);
+    }
+
+    /**
+     * Generate collection name that includes project and branch information
+     */
+    private generateCollectionName(absolutePath: string): string {
+        // Extract project and branch from the path
+        // Expected format: /something/repos/PROJECT/BRANCH/...
+        const pathParts = absolutePath.split(path.sep);
+        const reposIndex = pathParts.findIndex(part => part === 'repos');
+
+        if (reposIndex >= 0 && reposIndex + 2 < pathParts.length) {
+            const project = pathParts[reposIndex + 1];
+            const branch = pathParts[reposIndex + 2];
+
+            // Use the core library's method to get base hash, then add project/branch prefix
+            const baseCollectionName = this.context?.getCollectionName(absolutePath) || 'hybrid_code_chunks_unknown';
+            const hashPart = baseCollectionName.split('_').pop(); // Get the hash part
+
+            const newCollectionName = `hybrid_code_chunks_${project}_${branch}_${hashPart}`;
+            console.log(`[COLLECTION] 🏷️  Generated collection name: ${newCollectionName} for ${project}/${branch}`);
+            return newCollectionName;
+        }
+
+        // Fallback to default naming if path format is unexpected
+        console.warn(`[COLLECTION] ⚠️  Could not extract project/branch from path: ${absolutePath}, using default naming`);
+        return this.context?.getCollectionName(absolutePath) || 'hybrid_code_chunks_unknown';
     }
 
     /**
@@ -79,7 +104,7 @@ export class ToolHandlers {
             // Check each collection for codebase path
             for (const collectionName of collections) {
                 try {
-                    // Skip collections that don't match the code_chunks pattern (support both legacy and new collections)
+                    // Skip collections that don't match the code_chunks pattern (support both legacy and new collections with project/branch)
                     if (!collectionName.startsWith('code_chunks_') && !collectionName.startsWith('hybrid_code_chunks_')) {
                         console.log(`[SYNC-CLOUD] ⏭️  Skipping non-code collection: ${collectionName}`);
                         continue;
@@ -107,6 +132,17 @@ export class ToolHandlers {
                                 if (codebasePath && typeof codebasePath === 'string') {
                                     console.log(`[SYNC-CLOUD] 📍 Found codebase path: ${codebasePath} in collection: ${collectionName}`);
                                     cloudCodebases.add(codebasePath);
+
+                                    // Update collection name in snapshot if codebase is already indexed locally
+                                    const info = this.snapshotManager.getCodebaseInfo(codebasePath);
+                                    if (info && info.status === 'indexed' && 'collectionName' in info && !info.collectionName) {
+                                        console.log(`[SYNC-CLOUD] 🔄 Updating collection name for ${codebasePath}: ${collectionName}`);
+                                        this.snapshotManager.setCodebaseIndexed(codebasePath, {
+                                            indexedFiles: info.indexedFiles,
+                                            totalChunks: info.totalChunks,
+                                            status: info.indexStatus
+                                        }, collectionName);
+                                    }
                                 } else {
                                     console.warn(`[SYNC-CLOUD] ⚠️  No codebasePath found in metadata for collection: ${collectionName}`);
                                 }
@@ -177,9 +213,9 @@ export class ToolHandlers {
             };
         }
         
-        // Use default project and branch from config
-        const projectName = this.config.defaultProject;
-        const branch = this.config.defaultBranch || 'prod';
+        // Use project and branch from environment (set by headers) or fallback to config
+        const projectName = process.env.DEFAULT_PROJECT || this.config.defaultProject;
+        const branch = process.env.DEFAULT_BRANCH || this.config.defaultBranch || 'prod';
         
         if (!projectName) {
             return {
@@ -473,16 +509,23 @@ export class ToolHandlers {
                 console.log(`[FILE-SCAN] ⚠️  Could not check file changes:`, changeError);
             }
 
-            // Store synchronizer in the context (let context manage collection names)
+            // Store synchronizer in the context with custom collection naming
             if (this.context) {
                 console.log(`[COLLECTION] 🔧 Preparing hybrid vector collection for codebase: ${absolutePath}`);
                 try {
-                    await this.context.getPreparedCollection(absolutePath);
-                    console.log(`[COLLECTION] ✅ Collection preparation completed successfully`);
+                    // Generate custom collection name that includes project/branch info for tracking
+                    const customCollectionName = this.generateCollectionName(absolutePath);
 
-                    const collectionName = this.context.getCollectionName(absolutePath);
-                    console.log(`[COLLECTION] 📝 Collection name generated: ${collectionName}`);
-                    this.context.setSynchronizer(collectionName, synchronizer);
+                    // Prepare collection with default naming
+                    await this.context.getPreparedCollection(absolutePath);
+
+                    // Get the actual collection name used by core library
+                    const actualCollectionName = this.context.getCollectionName(absolutePath);
+                    console.log(`[COLLECTION] ✅ Collection preparation completed successfully`);
+                    console.log(`[COLLECTION] 📝 Actual collection name: ${actualCollectionName}`);
+                    console.log(`[COLLECTION] 🏷️  Custom tracking name: ${customCollectionName}`);
+
+                    this.context.setSynchronizer(actualCollectionName, synchronizer);
                 } catch (error) {
                     console.log(`[COLLECTION] ❌ Collection preparation failed:`);
                     console.log(`[COLLECTION] 💥 Error details:`, error);
@@ -490,8 +533,8 @@ export class ToolHandlers {
                 }
             }
             if (contextForThisTask !== this.context && this.context && contextForThisTask) {
-                const collectionName = this.context.getCollectionName(absolutePath);
-                contextForThisTask.setSynchronizer(collectionName, synchronizer);
+                const actualCollectionName = this.context.getCollectionName(absolutePath);
+                contextForThisTask.setSynchronizer(actualCollectionName, synchronizer);
             }
 
             console.log(`[BACKGROUND-INDEX] Starting indexing with ${splitterType} splitter for: ${absolutePath}`);
@@ -519,10 +562,20 @@ export class ToolHandlers {
                 console.log(`[BACKGROUND-INDEX] Progress: ${progress.phase} - ${progress.percentage}% (${progress.current}/${progress.total})`);
             });
             console.log(`[BACKGROUND-INDEX] ✅ Indexing completed successfully! Files: ${stats.indexedFiles}, Chunks: ${stats.totalChunks}`);
+            console.log(`[BACKGROUND-INDEX] 📊 Stats object received from indexCodebase:`, JSON.stringify(stats, null, 2));
+            console.log(`[BACKGROUND-INDEX] 📊 Stats object type:`, typeof stats);
+            console.log(`[BACKGROUND-INDEX] 📊 Stats object keys:`, Object.keys(stats || {}));
 
-            // Set codebase to indexed status with complete statistics
-            this.snapshotManager.setCodebaseIndexed(absolutePath, stats);
-            this.indexingStats = { indexedFiles: stats.indexedFiles, totalChunks: stats.totalChunks };
+            // Set codebase to indexed status with complete statistics including actual collection name
+            const actualCollectionName = this.context?.getCollectionName(absolutePath);
+            const customCollectionName = this.generateCollectionName(absolutePath);
+            console.log(`[BACKGROUND-INDEX] 🗄️  Saving with actual collection name: ${actualCollectionName}`);
+            console.log(`[BACKGROUND-INDEX] 🏷️  Custom tracking name: ${customCollectionName}`);
+            this.snapshotManager.setCodebaseIndexed(absolutePath, stats, actualCollectionName);
+
+            // Verify the stats were saved correctly
+            const savedInfo = this.snapshotManager.getCodebaseInfo(absolutePath);
+            console.log(`[BACKGROUND-INDEX] 🔍 Saved codebase info:`, JSON.stringify(savedInfo, null, 2));
 
             // Save snapshot after updating codebase lists
             this.snapshotManager.saveCodebaseSnapshot();
@@ -566,9 +619,9 @@ export class ToolHandlers {
                 };
             }
 
-            // Use default project and branch from config
-            const projectName = this.config.defaultProject;
-            const branch = this.config.defaultBranch || 'prod';
+            // Use project and branch from environment (set by headers) or fallback to config
+            const projectName = process.env.DEFAULT_PROJECT || this.config.defaultProject;
+            const branch = process.env.DEFAULT_BRANCH || this.config.defaultBranch || 'prod';
             
             if (!projectName) {
                 return {
@@ -665,6 +718,15 @@ export class ToolHandlers {
                 filterExpr = `fileExtension in [${quoted}]`;
             }
 
+            // Get collection name from snapshot or generate it
+            let collectionName = this.snapshotManager.getCollectionName(absolutePath);
+            if (!collectionName) {
+                collectionName = this.generateCollectionName(absolutePath);
+                console.log(`[SEARCH] 🔍 Generated collection name for search: ${collectionName}`);
+            } else {
+                console.log(`[SEARCH] 🔍 Using stored collection name: ${collectionName}`);
+            }
+
             // Search in the specified codebase
             const searchResults = await this.context!.semanticSearch(
                 absolutePath,
@@ -751,9 +813,9 @@ export class ToolHandlers {
             };
         }
 
-        // Use default project and branch from config
-        const projectName = this.config.defaultProject;
-        const branch = this.config.defaultBranch || 'prod';
+        // Use project and branch from environment (set by headers) or fallback to config
+        const projectName = process.env.DEFAULT_PROJECT || this.config.defaultProject;
+        const branch = process.env.DEFAULT_BRANCH || this.config.defaultBranch || 'prod';
         
         if (!projectName) {
             return {
@@ -822,9 +884,18 @@ export class ToolHandlers {
 
             console.log(`[CLEAR] Clearing codebase: ${absolutePath}`);
 
+            // Get collection name from snapshot or generate it
+            let collectionName = this.snapshotManager.getCollectionName(absolutePath);
+            if (!collectionName) {
+                collectionName = this.generateCollectionName(absolutePath);
+                console.log(`[CLEAR] 🔍 Generated collection name for clearing: ${collectionName}`);
+            } else {
+                console.log(`[CLEAR] 🔍 Using stored collection name: ${collectionName}`);
+            }
+
             try {
                 await this.context!.clearIndex(absolutePath);
-                console.log(`[CLEAR] Successfully cleared index for: ${absolutePath}`);
+                console.log(`[CLEAR] Successfully cleared index for: ${absolutePath} (collection: ${collectionName})`);
             } catch (error: any) {
                 const errorMsg = `Failed to clear ${absolutePath}: ${error.message}`;
                 console.error(`[CLEAR] ${errorMsg}`);
@@ -840,8 +911,6 @@ export class ToolHandlers {
             // Completely remove the cleared codebase from snapshot
             this.snapshotManager.removeCodebaseCompletely(absolutePath);
 
-            // Reset indexing stats if this was the active codebase
-            this.indexingStats = null;
 
             // Save snapshot after clearing index
             this.snapshotManager.saveCodebaseSnapshot();
@@ -911,9 +980,22 @@ export class ToolHandlers {
                     const info = this.snapshotManager.getCodebaseInfo(codebasePath);
                     if (info && 'indexedFiles' in info) {
                         const indexedInfo = info as any;
-                        statusMessage += `   📁 ${codebasePath}\n`;
+                        // Extract project/branch from path for display
+                        const pathParts = codebasePath.split(path.sep);
+                        const reposIndex = pathParts.findIndex(part => part === 'repos');
+                        let displayName = codebasePath;
+                        if (reposIndex >= 0 && reposIndex + 2 < pathParts.length) {
+                            const project = pathParts[reposIndex + 1];
+                            const branch = pathParts[reposIndex + 2];
+                            displayName = `${project}/${branch}`;
+                        }
+
+                        statusMessage += `   📁 ${displayName}\n`;
                         statusMessage += `      📊 ${indexedInfo.indexedFiles} files, ${indexedInfo.totalChunks} chunks\n`;
                         statusMessage += `      📅 Status: ${indexedInfo.indexStatus}\n`;
+                        if (indexedInfo.collectionName) {
+                            statusMessage += `      🗄️  Collection: ${indexedInfo.collectionName}\n`;
+                        }
                         statusMessage += `      🕐 Updated: ${new Date(indexedInfo.lastUpdated).toLocaleString()}\n\n`;
                     } else {
                         statusMessage += `   📁 ${codebasePath} (ready for search)\n\n`;
@@ -956,9 +1038,9 @@ export class ToolHandlers {
         try {
             const { force = false, splitter = 'ast' } = args;
             
-            // Use default project and branch from config
-            const projectName = this.config.defaultProject;
-            const branch = this.config.defaultBranch || 'prod';
+            // Use project and branch from environment (set by headers) or fallback to config
+            const projectName = process.env.DEFAULT_PROJECT || this.config.defaultProject;
+            const branch = process.env.DEFAULT_BRANCH || this.config.defaultBranch || 'prod';
             
             if (!projectName) {
                 return {
@@ -1094,8 +1176,8 @@ export class ToolHandlers {
      */
     public async handleListBranches(args: any): Promise<any> {
         try {
-            // Use default project from config
-            const projectName = this.config.defaultProject;
+            // Use project from environment (set by headers) or fallback to config
+            const projectName = process.env.DEFAULT_PROJECT || this.config.defaultProject;
             
             if (!projectName) {
                 return {
@@ -1151,9 +1233,9 @@ export class ToolHandlers {
      */
     public async handleListComponents(args: any): Promise<any> {
         try {
-            // Use default project and branch from config
-            const projectName = this.config.defaultProject;
-            const branch = this.config.defaultBranch || 'prod';
+            // Use project and branch from environment (set by headers) or fallback to config
+            const projectName = process.env.DEFAULT_PROJECT || this.config.defaultProject;
+            const branch = process.env.DEFAULT_BRANCH || this.config.defaultBranch || 'prod';
             
             if (!projectName) {
                 return {

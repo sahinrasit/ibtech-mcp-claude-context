@@ -69,6 +69,7 @@ export interface CodebaseInfoIndexed extends CodebaseInfoBase {
     indexedFiles: number;        // Number of files indexed
     totalChunks: number;         // Total number of chunks generated
     indexStatus: 'completed' | 'limit_reached';  // Status from indexing result
+    collectionName?: string;     // Collection name in vector database
 }
  
 // Index failed state - when indexing failed
