@@ -99,3 +99,6 @@ temp/
 # Lock files (keep pnpm-lock.yaml but ignore others if needed)
 # package-lock.json
 # yarn.lock
+
+# Repos directory - ignore all content
+repos/

@@ -4,6 +4,7 @@ import { Context, COLLECTION_LIMIT_MESSAGE } from "@zilliz/claude-context-core";
 import { SnapshotManager } from "./snapshot.js";
 import { ensureAbsolutePath, truncateContent, trackCodebasePath } from "./utils.js";
 import { ContextMcpConfig } from "./config.js";
+import { ConfigManager } from './config-manager.js';
 
 export class ToolHandlers {
     private context: Context | null;
@@ -446,7 +447,6 @@ export class ToolHandlers {
 
             // Check if directory exists and log its contents
             const fs = await import('fs');
-            const path = await import('path');
 
             try {
                 const stats = await fs.promises.stat(absolutePath);
@@ -551,9 +551,10 @@ export class ToolHandlers {
                 // Update progress in snapshot manager using new method
                 this.snapshotManager.setCodebaseIndexing(absolutePath, progress.percentage);
 
-                // Save snapshot periodically (every 2 seconds to avoid too frequent saves)
+                // Save snapshot periodically (configurable interval to reduce I/O overhead)
                 const currentTime = Date.now();
-                if (currentTime - lastSaveTime >= 2000) { // 2 seconds = 2000ms
+                const snapshotConfig = ConfigManager.getInstance().getSnapshotConfig();
+                if (currentTime - lastSaveTime >= snapshotConfig.SAVE_INTERVAL_MS) {
                     this.snapshotManager.saveCodebaseSnapshot();
                     lastSaveTime = currentTime;
                     console.log(`[BACKGROUND-INDEX] 💾 Saved progress snapshot at ${progress.percentage.toFixed(1)}%`);
@@ -603,8 +604,8 @@ export class ToolHandlers {
         }
     }
 
-    public async handleSearchCode(args: any) {
-        const { query, limit = 10, extensionFilter } = args;
+    public async handleSearchCode(_args: any) {
+        const { query, limit = 10, extensionFilter } = _args;
         const resultLimit = limit || 10;
 
         try {
@@ -801,7 +802,7 @@ export class ToolHandlers {
         }
     }
 
-    public async handleClearIndex(args: any) {
+    public async handleClearIndex(_args: any) {
         // Check if context is initialized
         if (!this.context) {
             return {
@@ -956,7 +957,7 @@ export class ToolHandlers {
         }
     }
 
-    public async handleGetIndexingStatus(args: any) {
+    public async handleGetIndexingStatus(_args: any) {
         try {
             // Get all indexed codebases
             const indexedCodebases = this.snapshotManager.getIndexedCodebases();
@@ -1131,7 +1132,7 @@ export class ToolHandlers {
     /**
      * Handle list_projects tool - List available projects
      */
-    public async handleListProjects(args: any): Promise<any> {
+    public async handleListProjects(_args: any): Promise<any> {
         try {
             const { getAvailableProjects } = await import('./config.js');
             const reposBasePath = path.join(process.cwd(), 'repos'); // Always use ./repos in project directory
@@ -1174,7 +1175,7 @@ export class ToolHandlers {
     /**
      * Handle list_branches tool - List available branches for a project
      */
-    public async handleListBranches(args: any): Promise<any> {
+    public async handleListBranches(_args: any): Promise<any> {
         try {
             // Use project from environment (set by headers) or fallback to config
             const projectName = process.env.DEFAULT_PROJECT || this.config.defaultProject;
@@ -1231,7 +1232,7 @@ export class ToolHandlers {
     /**
      * Handle list_components tool - List available components for a project branch
      */
-    public async handleListComponents(args: any): Promise<any> {
+    public async handleListComponents(_args: any): Promise<any> {
         try {
             // Use project and branch from environment (set by headers) or fallback to config
             const projectName = process.env.DEFAULT_PROJECT || this.config.defaultProject;

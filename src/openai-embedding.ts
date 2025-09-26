@@ -1,4 +1,5 @@
 import { Embedding, EmbeddingVector } from "@zilliz/claude-context-core";
+import { ConfigManager } from './config-manager';
 
 export interface OpenAIEmbeddingConfig {
     model: string;
@@ -90,45 +91,80 @@ export class OpenAIEmbedding extends Embedding {
     async embedBatch(texts: string[]): Promise<EmbeddingVector[]> {
         const processedTexts = this.preprocessTexts(texts);
 
+        // Concurrent batch processing with chunking - using centralized config
+        const configManager = ConfigManager.getInstance();
+        const config = configManager.getEmbeddingConfig('OPENAI');
+        const CONCURRENT_REQUESTS = config.concurrentRequests;
+        const CHUNK_SIZE = config.chunkSize;
+        const BATCH_DELAY = config.batchDelay;
+
+        if (configManager.isDebugEnabled()) {
+            console.log(`[OPENAI] Using config: ${JSON.stringify(config)}`);
+        }
+
         try {
-            const response = await fetch(`${this.config.baseURL || 'https://api.openai.com/v1'}/embeddings`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.config.apiKey}`
-                },
-                body: JSON.stringify({
-                    input: processedTexts,
-                    model: this.config.model
-                })
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`OpenAI API error: ${response.status} ${response.statusText} - ${errorText}`);
+            // Split into smaller chunks for better performance
+            const chunks: string[][] = [];
+            for (let i = 0; i < processedTexts.length; i += CHUNK_SIZE) {
+                chunks.push(processedTexts.slice(i, i + CHUNK_SIZE));
             }
 
-            const data = await response.json() as OpenAIEmbeddingResponse;
+            console.log(`[OPENAI] 🚀 Processing ${processedTexts.length} texts in ${chunks.length} chunks with ${CONCURRENT_REQUESTS} concurrent requests`);
 
-            if (!data.data || !Array.isArray(data.data)) {
-                throw new Error('Invalid response format from OpenAI API');
-            }
+            // Process chunks concurrently with rate limiting
+            const chunkPromises = chunks.map(async (chunk) => {
+                const response = await fetch(`${this.config.baseURL || 'https://api.openai.com/v1'}/embeddings`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.config.apiKey}`
+                    },
+                    body: JSON.stringify({
+                        input: chunk,
+                        model: this.config.model
+                    })
+                });
 
-            const results: EmbeddingVector[] = [];
-            for (const item of data.data) {
-                if (!item.embedding) {
-                    throw new Error('Invalid embedding data in response');
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`OpenAI API error: ${response.status} ${response.statusText} - ${errorText}`);
                 }
 
-                const embedding = item.embedding;
-                this.dimension = embedding.length;
+                const data = await response.json() as OpenAIEmbeddingResponse;
 
-                results.push({
-                    vector: embedding,
-                    dimension: this.dimension
+                if (!data.data || !Array.isArray(data.data)) {
+                    throw new Error('Invalid response format from OpenAI API');
+                }
+
+                return data.data.map(item => {
+                    if (!item.embedding) {
+                        throw new Error('Invalid embedding data in response');
+                    }
+
+                    const embedding = item.embedding;
+                    this.dimension = embedding.length;
+
+                    return {
+                        vector: embedding,
+                        dimension: this.dimension
+                    };
                 });
+            });
+
+            // Execute chunks with concurrency limit
+            const results: EmbeddingVector[] = [];
+            for (let i = 0; i < chunkPromises.length; i += CONCURRENT_REQUESTS) {
+                const batch = chunkPromises.slice(i, i + CONCURRENT_REQUESTS);
+                const batchResults = await Promise.all(batch);
+                results.push(...batchResults.flat());
+
+                // Small delay between batches to respect API rate limits
+                if (i + CONCURRENT_REQUESTS < chunkPromises.length && BATCH_DELAY > 0) {
+                    await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
+                }
             }
 
+            console.log(`[OPENAI] ✅ Successfully processed ${results.length} embeddings`);
             return results;
         } catch (error) {
             console.error(`[OPENAI] Batch embedding error:`, error);

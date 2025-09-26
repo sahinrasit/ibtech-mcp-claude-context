@@ -15,7 +15,10 @@
       "Read(//Users/rasitsahin/.context/**)",
       "Read(//Users/rasitsahin/**)",
       "Bash(pnpm build:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(tree:*)",
+      "Bash(npm run lint)",
+      "mcp__ide__getDiagnostics"
     ],
     "deny": [],
     "ask": []
