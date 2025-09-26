@@ -14,7 +14,8 @@
       "Bash(docker logs:*)",
       "Read(//Users/rasitsahin/.context/**)",
       "Read(//Users/rasitsahin/**)",
-      "Bash(pnpm build:*)"
+      "Bash(pnpm build:*)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []

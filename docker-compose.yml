@@ -41,13 +41,28 @@ services:
  
   milvus:
     container_name: milvus-standalone
-    image: milvusdb/milvus:v2.5.1
+    image: milvusdb/milvus:v2.5.14
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
+      # Optimized for large projects with stable search
+      SEGMENT_SIZE_MB: 512              # Küçük segment = hızlı search
+      SEGMENT_SEAL_PROPORTION: 0.15     # Erken seal = az segment
+      QUERY_NODE_CACHE_SIZE_MB: 3072    # Dengeli cache
+      INDEX_ENGINE_CACHE_SIZE_MB: 1536  # Dengeli index cache
+      INSERT_BUFFER_SIZE_MB: 256        # Küçük buffer = hızlı flush
+      MAX_SEGMENT_NUM: 8                # Max segment sayısı
+    deploy:
+      resources:
+        limits:
+          memory: 8G                    # Daha kontrollü memory
+          cpus: '4'
+        reservations:
+          memory: 3G
+          cpus: '2'
     volumes:
       - milvus_data:/var/lib/milvus
     healthcheck:
