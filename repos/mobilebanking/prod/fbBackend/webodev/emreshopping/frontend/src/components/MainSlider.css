@@ -1,0 +1,29 @@
+/* src/components/MainSlider.css */
+.slider-container {
+  display: flex;
+  overflow-x: scroll;
+  gap: 1rem;
+  padding: 2rem;
+}
+
+.slider-item {
+  min-width: 200px;
+  background-color: #f9f9f9;
+  padding: 1rem;
+  border-radius: 8px;
+  text-align: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+.slider-item img {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.slider-item h3 {
+  margin-top: 0.5rem;
+  font-size: 1rem;
+  font-weight: bold;
+  color: #333;
+}

@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker volume rm:*)",
+      "Read(//Users/rasitsahin/.cursor/**)",
+      "Bash(docker-compose up:*)",
+      "Bash(pnpm install:*)",
+      "Bash(pnpm typecheck:*)",
+      "Bash(docker-compose exec:*)",
+      "Bash(npm run build:*)",
+      "Bash(docker-compose:*)",
+      "Bash(docker logs:*)",
+      "Read(//Users/rasitsahin/.context/**)",
+      "Read(//Users/rasitsahin/**)",
+      "Bash(pnpm build:*)",
+      "Bash(python3:*)",
+      "Bash(tree:*)",
+      "Bash(npm run lint)",
+      "mcp__ide__getDiagnostics"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

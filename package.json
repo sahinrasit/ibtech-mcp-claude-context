@@ -45,12 +45,15 @@
         "prepublishOnly": "pnpm build"
     },
     "dependencies": {
-        "@zilliz/claude-context-core": "latest",
         "@modelcontextprotocol/sdk": "^1.12.1",
+        "@zilliz/claude-context-core": "latest",
+        "express": "^4.18.2",
         "zod": "^3.25.55"
     },
     "devDependencies": {
+        "@types/express": "^4.17.17",
         "@types/node": "^20.0.0",
+        "rimraf": "^6.0.1",
         "tsx": "^4.19.4",
         "typescript": "^5.0.0"
     },

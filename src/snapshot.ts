@@ -353,11 +353,20 @@ export class SnapshotManager {
      */
     public setCodebaseIndexed(
         codebasePath: string,
-        stats: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' }
+        stats: { indexedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' },
+        collectionName?: string
     ): void {
+        console.log(`[SNAPSHOT-DEBUG] Setting codebase indexed: ${codebasePath}`);
+        console.log(`[SNAPSHOT-DEBUG] Stats received:`, JSON.stringify(stats, null, 2));
+        console.log(`[SNAPSHOT-DEBUG] Stats type:`, typeof stats);
+        console.log(`[SNAPSHOT-DEBUG] Stats keys:`, Object.keys(stats || {}));
+        console.log(`[SNAPSHOT-DEBUG] indexedFiles value:`, stats?.indexedFiles, 'type:', typeof stats?.indexedFiles);
+        console.log(`[SNAPSHOT-DEBUG] totalChunks value:`, stats?.totalChunks, 'type:', typeof stats?.totalChunks);
+
         // Add to indexed list if not already there
         if (!this.indexedCodebases.includes(codebasePath)) {
             this.indexedCodebases.push(codebasePath);
+            console.log(`[SNAPSHOT-DEBUG] Added to indexed list: ${codebasePath}`);
         }
 
         // Remove from indexing state
@@ -371,9 +380,12 @@ export class SnapshotManager {
             indexedFiles: stats.indexedFiles,
             totalChunks: stats.totalChunks,
             indexStatus: stats.status,
-            lastUpdated: new Date().toISOString()
+            lastUpdated: new Date().toISOString(),
+            collectionName: collectionName
         };
         this.codebaseInfoMap.set(codebasePath, info);
+        
+        console.log(`[SNAPSHOT-DEBUG] Updated codebase info:`, JSON.stringify(info, null, 2));
     }
 
     /**
@@ -413,6 +425,17 @@ export class SnapshotManager {
      */
     public getCodebaseInfo(codebasePath: string): CodebaseInfo | undefined {
         return this.codebaseInfoMap.get(codebasePath);
+    }
+
+    /**
+     * Get collection name for a specific codebase
+     */
+    public getCollectionName(codebasePath: string): string | undefined {
+        const info = this.codebaseInfoMap.get(codebasePath);
+        if (info && info.status === 'indexed' && 'collectionName' in info) {
+            return info.collectionName;
+        }
+        return undefined;
     }
 
     /**
@@ -483,6 +506,7 @@ export class SnapshotManager {
             // Add all codebases from the info map
             for (const [codebasePath, info] of this.codebaseInfoMap) {
                 codebases[codebasePath] = info;
+                console.log(`[SNAPSHOT-DEBUG] Adding to snapshot: ${codebasePath}`, JSON.stringify(info, null, 2));
             }
 
             const snapshot: CodebaseSnapshotV2 = {
@@ -491,6 +515,7 @@ export class SnapshotManager {
                 lastUpdated: new Date().toISOString()
             };
 
+            console.log(`[SNAPSHOT-DEBUG] Final snapshot before saving:`, JSON.stringify(snapshot, null, 2));
             fs.writeFileSync(this.snapshotFilePath, JSON.stringify(snapshot, null, 2));
 
             const indexedCount = this.indexedCodebases.length;

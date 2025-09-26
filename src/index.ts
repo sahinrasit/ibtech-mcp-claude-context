@@ -16,13 +16,17 @@ console.warn = (...args: any[]) => {
 // console.error already goes to stderr by default
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
     ListToolsRequestSchema,
     CallToolRequestSchema
 } from "@modelcontextprotocol/sdk/types.js";
 import { Context } from "@zilliz/claude-context-core";
+import { CustomContext } from "./custom-context.js";
 import { MilvusVectorDatabase } from "@zilliz/claude-context-core";
+import * as http from "http";
+import express, { Request, Response, NextFunction } from "express";
+import { randomUUID } from "crypto";
 
 // Import our modular components
 import { createMcpConfig, logConfigurationSummary, showHelpMessage, ContextMcpConfig, buildProjectPath } from "./config.js";
@@ -33,12 +37,17 @@ import { ToolHandlers } from "./handlers.js";
 
 class ContextMcpServer {
     private server: Server;
-    private context: Context;
+    private context: Context | null = null;
     private snapshotManager: SnapshotManager;
     private syncManager: SyncManager;
     private toolHandlers: ToolHandlers;
+    private httpTransport?: StreamableHTTPServerTransport;
+    public httpServer?: http.Server;
+    private config: ContextMcpConfig;
+    // Stateless design - no session management needed
 
     constructor(config: ContextMcpConfig) {
+        this.config = config;
         // Initialize MCP server
         this.server = new Server(
             {
@@ -52,24 +61,10 @@ class ContextMcpServer {
             }
         );
 
-        // Initialize embedding provider
-        console.log(`[EMBEDDING] Initializing embedding provider: ${config.embeddingProvider}`);
-        console.log(`[EMBEDDING] Using model: ${config.embeddingModel}`);
-
-        const embedding = createEmbeddingInstance(config);
-        logEmbeddingProviderInfo(config, embedding);
-
-        // Initialize vector database
-        const vectorDatabase = new MilvusVectorDatabase({
-            address: config.milvusAddress,
-            ...(config.milvusToken && { token: config.milvusToken })
-        });
-
-        // Initialize Claude Context
-        this.context = new Context({
-            embedding,
-            vectorDatabase
-        });
+        // HTTP transport mode - lazy initialization
+        console.log(`[EMBEDDING] HTTP transport mode - lazy initialization from environment`);
+        this.context = null; // Will be initialized when first request comes
+        console.log(`[CONTEXT] ✅ Context initialization completed`);
 
         // Initialize managers
         this.snapshotManager = new SnapshotManager();
@@ -84,36 +79,42 @@ class ContextMcpServer {
 
     private setupTools() {
         const index_description = `
-Index a codebase directory to enable semantic search using a configurable code splitter.
+Index a company codebase directory to enable semantic search for all employees.
 
-⚠️ **IMPORTANT**:
-- You MUST provide an absolute path to the target codebase.
+🏢 **Company Document Search**:
+- Indexes company documents and code for shared access by all employees
+- Once indexed by any employee, all employees can search the same index
+- Stateless design - no user-specific data or session management
 
 ✨ **Usage Guidance**:
 - This tool is typically used when search fails due to an unindexed codebase.
 - If indexing is attempted on an already indexed path, and a conflict is detected, you MUST prompt the user to confirm whether to proceed with a force index (i.e., re-indexing and overwriting the previous index).
+- Indexing updates are immediately available to all users
 `;
 
 
         const search_description = `
-Search the indexed codebase using natural language queries within a specified absolute path.
+Search the indexed company codebase using natural language queries.
 
-⚠️ **IMPORTANT**:
-- You MUST provide an absolute path.
+🏢 **Company Document Search**:
+- Search across all company documents and code indexed by any employee
+- Stateless design - each search is independent, no conversation history
+- Concurrent access - supports up to 100 simultaneous users
 
 🎯 **When to Use**:
-This tool is versatile and can be used before completing various tasks to retrieve relevant context:
+This tool is versatile and can be used for various company document searches:
 - **Code search**: Find specific functions, classes, or implementations
-- **Context-aware assistance**: Gather relevant code context before making changes
+- **Document search**: Find company policies, procedures, or documentation
 - **Issue identification**: Locate problematic code sections or bugs
 - **Code review**: Understand existing implementations and patterns
 - **Refactoring**: Find all related code pieces that need to be updated
 - **Feature development**: Understand existing architecture and similar implementations
-- **Duplicate detection**: Identify redundant or duplicated code patterns across the codebase
+- **Knowledge discovery**: Find relevant information across all company documents
 
 ✨ **Usage Guidance**:
 - If the codebase is not indexed, this tool will return a clear error message indicating that indexing is required first.
 - You can then use the index_codebase tool to index the codebase before searching again.
+- All searches are independent - no user context or conversation history is maintained
 `;
 
         // Define available tools
@@ -122,7 +123,7 @@ This tool is versatile and can be used before completing various tasks to retrie
                 tools: [
                     {
                         name: "index_codebase",
-                        description: `Index the configured repos directory using default project and branch from config. Indexes the entire branch directory: {reposBasePath}/{defaultProject}/{defaultBranch}`,
+                        description: `Index company documents and code for shared access by all employees. Indexes the entire branch directory: {reposBasePath}/{defaultProject}/{defaultBranch}`,
                         inputSchema: {
                             type: "object",
                             properties: {
@@ -159,7 +160,7 @@ This tool is versatile and can be used before completing various tasks to retrie
                     },
                     {
                         name: "search_code",
-                        description: `Search the indexed codebase using natural language queries with default project and branch from config. Searches the entire branch directory: {reposBasePath}/{defaultProject}/{defaultBranch}`,
+                        description: `Search company documents and code using natural language queries. Stateless search across all indexed company content. Searches the entire branch directory: {reposBasePath}/{defaultProject}/{defaultBranch}`,
                         inputSchema: {
                             type: "object",
                             properties: {
@@ -187,7 +188,7 @@ This tool is versatile and can be used before completing various tasks to retrie
                     },
                     {
                         name: "clear_index",
-                        description: `Clear the search index for the default project and branch from config. Clears the entire branch directory: {reposBasePath}/{defaultProject}/{defaultBranch}`,
+                        description: `Clear the company document search index for the default project and branch from config. Clears the entire branch directory: {reposBasePath}/{defaultProject}/{defaultBranch}`,
                         inputSchema: {
                             type: "object",
                             properties: {},
@@ -196,7 +197,7 @@ This tool is versatile and can be used before completing various tasks to retrie
                     },
                     {
                         name: "get_indexing_status",
-                        description: `Get the current indexing status of all indexed projects. Shows progress percentage for actively indexing codebases and completion status for indexed codebases.`,
+                        description: `Get the current indexing status of all company document projects. Shows progress percentage for actively indexing codebases and completion status for indexed codebases.`,
                         inputSchema: {
                             type: "object",
                             properties: {},
@@ -205,7 +206,7 @@ This tool is versatile and can be used before completing various tasks to retrie
                     },
                     {
                         name: "index_project",
-                        description: `Index the default project from the structured repos directory using default branch from config. Automatically indexes all components in the specified branch. Uses the configured project structure: {reposBasePath}/{defaultProject}/{defaultBranch}/{component}`,
+                        description: `Index the default company project from the structured repos directory using default branch from config. Automatically indexes all components in the specified branch. Uses the configured project structure: {reposBasePath}/{defaultProject}/{defaultBranch}/{component}`,
                         inputSchema: {
                             type: "object",
                             properties: {
@@ -287,19 +288,357 @@ This tool is versatile and can be used before completing various tasks to retrie
         console.log('[SYNC-DEBUG] MCP server start() method called');
         console.log('Starting Context MCP server...');
 
-        const transport = new StdioServerTransport();
-        console.log('[SYNC-DEBUG] StdioServerTransport created, attempting server connection...');
+        const config = this.getConfig();
+        
+        await this.startHttpServer();
 
-        await this.server.connect(transport);
-        console.log("MCP server started and listening on stdio.");
-        console.log('[SYNC-DEBUG] Server connection established successfully');
-
-        // Start background sync after server is connected
-        console.log('[SYNC-DEBUG] Initializing background sync...');
-        this.syncManager.startBackgroundSync();
-        console.log('[SYNC-DEBUG] MCP server initialization complete');
+        // Stateless design - no background sync needed
+        console.log('[SYNC-DEBUG] Stateless MCP server initialization complete');
     }
+
+
+    private async startHttpServer() {
+        const config = this.getConfig();
+        if (!config.transport?.http) {
+            throw new Error('HTTP transport configuration is missing');
+        }
+
+        const httpConfig = config.transport.http;
+        
+        // Stateless design - no MCP transport needed, we'll handle requests directly
+
+        // Create Express app
+        const app = express();
+        
+        // Add custom headers middleware
+        if (httpConfig.headers) {
+            app.use((req: Request, res: Response, next: NextFunction) => {
+                Object.entries(httpConfig.headers!).forEach(([key, value]) => {
+                    res.setHeader(key, value);
+                });
+                next();
+            });
+        }
+
+        // Add parameter extraction middleware for HTTP transport
+        app.use((req: Request, res: Response, next: NextFunction) => {
+            // Extract only project/branch parameters from headers
+            const headers = req.headers;
+
+            if (headers['x-default-project']) {
+                process.env.DEFAULT_PROJECT = headers['x-default-project'] as string;
+            }
+            if (headers['x-default-branch']) {
+                process.env.DEFAULT_BRANCH = headers['x-default-branch'] as string;
+            }
+            
+            // Initialize context if not already initialized (lazy initialization)
+            const hasApiKey = process.env.OPENAI_API_KEY || process.env.IBTHINK_API_KEY || process.env.VOYAGEAI_API_KEY || process.env.GEMINI_API_KEY;
+            if (!this.context && hasApiKey && process.env.MILVUS_ADDRESS) {
+                console.log(`[EMBEDDING] Initializing context from headers...`);
+                try {
+                    const embedding = createEmbeddingInstance({
+                        embeddingProvider: process.env.EMBEDDING_PROVIDER as any || 'OpenAI',
+                        embeddingModel: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
+                        openaiApiKey: process.env.OPENAI_API_KEY,
+                        openaiBaseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+                        ibthinkApiKey: process.env.IBTHINK_API_KEY,
+                        ibthinkBaseUrl: process.env.IBTHINK_BASE_URL,
+                        voyageaiApiKey: process.env.VOYAGEAI_API_KEY,
+                        geminiApiKey: process.env.GEMINI_API_KEY,
+                        geminiBaseUrl: process.env.GEMINI_BASE_URL,
+                        milvusAddress: process.env.MILVUS_ADDRESS,
+                        milvusToken: process.env.MILVUS_TOKEN
+                    } as ContextMcpConfig);
+                    
+                    const vectorDatabase = new MilvusVectorDatabase({
+                        address: process.env.MILVUS_ADDRESS,
+                        ...(process.env.MILVUS_TOKEN && { token: process.env.MILVUS_TOKEN })
+                    });
+                    
+                    this.context = new CustomContext({
+                        embedding,
+                        vectorDatabase
+                    });
+                    
+                    // Update managers with new context
+                    this.syncManager = new SyncManager(this.context, this.snapshotManager);
+                    this.toolHandlers = new ToolHandlers(this.context, this.snapshotManager, this.config);
+                    
+                    console.log(`[EMBEDDING] ✅ Context initialized successfully from headers`);
+                } catch (error) {
+                    console.error(`[EMBEDDING] ❌ Failed to initialize context from headers:`, error);
+                }
+            }
+            
+            next();
+        });
+
+        // Parse JSON bodies
+        app.use(express.json());
+
+        // Handle MCP requests with stateless design
+        app.all('/mcp', async (req: Request, res: Response) => {
+            try {
+                // Log request details for debugging
+                console.log(`[HTTP] Handling stateless MCP request - Method: ${req.method}`);
+                
+                // Ensure context is initialized for each request
+                const hasApiKey = process.env.OPENAI_API_KEY || process.env.IBTHINK_API_KEY || process.env.VOYAGEAI_API_KEY || process.env.GEMINI_API_KEY;
+                if (!this.context && hasApiKey && process.env.MILVUS_ADDRESS) {
+                    console.log(`[EMBEDDING] Ensuring context initialization for request...`);
+                    try {
+                        const embedding = createEmbeddingInstance({
+                            embeddingProvider: process.env.EMBEDDING_PROVIDER as any || 'OpenAI',
+                            embeddingModel: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
+                            openaiApiKey: process.env.OPENAI_API_KEY,
+                            openaiBaseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+                            ibthinkApiKey: process.env.IBTHINK_API_KEY,
+                            ibthinkBaseUrl: process.env.IBTHINK_BASE_URL,
+                            voyageaiApiKey: process.env.VOYAGEAI_API_KEY,
+                            geminiApiKey: process.env.GEMINI_API_KEY,
+                            geminiBaseUrl: process.env.GEMINI_BASE_URL,
+                            milvusAddress: process.env.MILVUS_ADDRESS,
+                            milvusToken: process.env.MILVUS_TOKEN
+                        } as ContextMcpConfig);
+                        
+                        const vectorDatabase = new MilvusVectorDatabase({
+                            address: process.env.MILVUS_ADDRESS,
+                            ...(process.env.MILVUS_TOKEN && { token: process.env.MILVUS_TOKEN })
+                        });
+                        
+                        this.context = new CustomContext({
+                            embedding,
+                            vectorDatabase
+                        });
+                        
+                        // Update managers with new context
+                        this.syncManager = new SyncManager(this.context, this.snapshotManager);
+                        this.toolHandlers = new ToolHandlers(this.context, this.snapshotManager, this.config);
+                        
+                        console.log(`[EMBEDDING] ✅ Context ensured and initialized successfully`);
+                    } catch (error) {
+                        console.error(`[EMBEDDING] ❌ Failed to ensure context initialization:`, error);
+                    }
+                }
+                
+                // Handle MCP requests directly without transport
+                const mcpRequest = req.body;
+                
+                if (!mcpRequest || !mcpRequest.method) {
+                    res.status(400).json({ error: 'Invalid MCP request' });
+                    return;
+                }
+                
+                // Handle different MCP methods
+                switch (mcpRequest.method) {
+                    case 'initialize':
+                        res.json({
+                            jsonrpc: '2.0',
+                            id: mcpRequest.id,
+                            result: {
+                                protocolVersion: '2024-11-05',
+                                capabilities: {
+                                    tools: {}
+                                },
+                                serverInfo: {
+                                    name: this.config.name,
+                                    version: this.config.version
+                                }
+                            }
+                        });
+                        break;
+                        
+                    case 'tools/list':
+                        res.json({
+                            jsonrpc: '2.0',
+                            id: mcpRequest.id,
+                            result: {
+                                tools: [
+                                    {
+                                        name: "index_codebase",
+                                        description: `Index company documents and code for shared access by all employees. Indexes the entire branch directory: {reposBasePath}/{defaultProject}/{defaultBranch}`,
+                                        inputSchema: {
+                                            type: "object",
+                                            properties: {
+                                                force: { type: "boolean", description: "Force re-indexing even if already indexed", default: false },
+                                                splitter: { type: "string", description: "Code splitter to use: 'ast' for syntax-aware splitting with automatic fallback, 'langchain' for character-based splitting", enum: ["ast", "langchain"], default: "ast" },
+                                                customExtensions: { type: "array", items: { type: "string" }, description: "Optional: Additional file extensions to include beyond defaults", default: [] },
+                                                ignorePatterns: { type: "array", items: { type: "string" }, description: "Optional: Additional ignore patterns to exclude specific files/directories beyond defaults", default: [] }
+                                            },
+                                            required: []
+                                        }
+                                    },
+                                    {
+                                        name: "search_code",
+                                        description: `Search company documents and code using natural language queries. Stateless search across all indexed company content. Searches the entire branch directory: {reposBasePath}/{defaultProject}/{defaultBranch}`,
+                                        inputSchema: {
+                                            type: "object",
+                                            properties: {
+                                                query: { type: "string", description: "Natural language query to search for in the codebase" },
+                                                limit: { type: "number", description: "Maximum number of results to return", default: 10, maximum: 50 },
+                                                extensionFilter: { type: "array", items: { type: "string" }, description: "Optional: List of file extensions to filter results", default: [] }
+                                            },
+                                            required: ["query"]
+                                        }
+                                    },
+                                    {
+                                        name: "clear_index",
+                                        description: `Clear the company document search index for the default project and branch from config. Clears the entire branch directory: {reposBasePath}/{defaultProject}/{defaultBranch}`,
+                                        inputSchema: { type: "object", properties: {}, required: [] }
+                                    },
+                                    {
+                                        name: "get_indexing_status",
+                                        description: `Get the current indexing status of all company document projects. Shows progress percentage for actively indexing codebases and completion status for indexed codebases.`,
+                                        inputSchema: { type: "object", properties: {}, required: [] }
+                                    },
+                                    {
+                                        name: "index_project",
+                                        description: `Index the default company project from the structured repos directory using default branch from config. Automatically indexes all components in the specified branch. Uses the configured project structure: {reposBasePath}/{defaultProject}/{defaultBranch}/{component}`,
+                                        inputSchema: {
+                                            type: "object",
+                                            properties: {
+                                                force: { type: "boolean", description: "Force re-indexing even if already indexed", default: false },
+                                                splitter: { type: "string", description: "Code splitter to use: 'ast' for syntax-aware splitting with automatic fallback, 'langchain' for character-based splitting", enum: ["ast", "langchain"], default: "ast" }
+                                            },
+                                            required: []
+                                        }
+                                    },
+                                    {
+                                        name: "list_projects",
+                                        description: `List available projects in the repos directory`,
+                                        inputSchema: { type: "object", properties: {}, required: [] }
+                                    },
+                                    {
+                                        name: "list_branches",
+                                        description: `List available branches for the default project from config`,
+                                        inputSchema: { type: "object", properties: {}, required: [] }
+                                    },
+                                    {
+                                        name: "list_components",
+                                        description: `List available components for the default project and branch from config`,
+                                        inputSchema: { type: "object", properties: {}, required: [] }
+                                    }
+                                ]
+                            }
+                        });
+                        break;
+                        
+                    case 'tools/call':
+                        const { name, arguments: args } = mcpRequest.params;
+                        
+                        try {
+                            let result;
+                            switch (name) {
+                                case "index_codebase":
+                                    result = await this.toolHandlers.handleIndexCodebase(args);
+                                    break;
+                                case "search_code":
+                                    result = await this.toolHandlers.handleSearchCode(args);
+                                    break;
+                                case "clear_index":
+                                    result = await this.toolHandlers.handleClearIndex(args);
+                                    break;
+                                case "get_indexing_status":
+                                    result = await this.toolHandlers.handleGetIndexingStatus(args);
+                                    break;
+                                case "index_project":
+                                    result = await this.toolHandlers.handleIndexProject(args);
+                                    break;
+                                case "list_projects":
+                                    result = await this.toolHandlers.handleListProjects(args);
+                                    break;
+                                case "list_branches":
+                                    result = await this.toolHandlers.handleListBranches(args);
+                                    break;
+                                case "list_components":
+                                    result = await this.toolHandlers.handleListComponents(args);
+                                    break;
+                                default:
+                                    throw new Error(`Unknown tool: ${name}`);
+                            }
+                            
+                            res.json({
+                                jsonrpc: '2.0',
+                                id: mcpRequest.id,
+                                result
+                            });
+                        } catch (error: any) {
+                            res.json({
+                                jsonrpc: '2.0',
+                                id: mcpRequest.id,
+                                error: {
+                                    code: -32000,
+                                    message: error.message || 'Tool execution failed'
+                                }
+                            });
+                        }
+                        break;
+                        
+                    default:
+                        res.json({
+                            jsonrpc: '2.0',
+                            id: mcpRequest.id,
+                            error: {
+                                code: -32601,
+                                message: `Method not found: ${mcpRequest.method}`
+                            }
+                        });
+                }
+            } catch (error) {
+                console.error('[HTTP] Error handling request:', error);
+                res.status(500).json({ error: 'Internal server error' });
+            }
+        });
+
+        // Health check endpoint
+        app.get('/health', (req: Request, res: Response) => {
+            res.json({ status: 'ok', timestamp: new Date().toISOString() });
+        });
+
+        // Create HTTP server
+        this.httpServer = http.createServer(app);
+
+        // Start server with improved error handling and port binding
+        return new Promise<void>((resolve, reject) => {
+            // Set server timeout to prevent hanging connections - optimized for concurrent access
+            this.httpServer!.timeout = 60000; // 60 seconds for better concurrent handling
+            
+            this.httpServer!.listen(httpConfig.port, httpConfig.host, () => {
+                console.log(`[HTTP] MCP server started and listening on http://${httpConfig.host}:${httpConfig.port}`);
+                console.log(`[HTTP] MCP endpoint: http://${httpConfig.host}:${httpConfig.port}/mcp`);
+                console.log(`[HTTP] Health check: http://${httpConfig.host}:${httpConfig.port}/health`);
+                
+                // Stateless design - no transport connection needed
+                console.log('[HTTP] Stateless server ready');
+                    resolve();
+            });
+
+            this.httpServer!.on('error', (error: any) => {
+                console.error('[HTTP] Server error:', error);
+                if (error.code === 'EADDRINUSE') {
+                    console.error(`[HTTP] Port ${httpConfig.port} is already in use. Please try a different port or wait for the previous server to fully shut down.`);
+                }
+                reject(error);
+            });
+            
+            // Handle server close events
+            this.httpServer!.on('close', () => {
+                console.log('[HTTP] Server closed');
+            });
+        });
+    }
+
+    private getConfig(): ContextMcpConfig {
+        return this.config;
+    }
+
+
+
 }
+
+// Global server instance for graceful shutdown
+let globalServer: ContextMcpServer | null = null;
 
 // Main execution
 async function main() {
@@ -316,20 +655,54 @@ async function main() {
     const config = createMcpConfig();
     logConfigurationSummary(config);
 
-    const server = new ContextMcpServer(config);
-    await server.start();
+    globalServer = new ContextMcpServer(config);
+    await globalServer.start();
 }
 
 // Handle graceful shutdown
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
     console.error("Received SIGINT, shutting down gracefully...");
-    process.exit(0);
+    await gracefulShutdown();
 });
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
     console.error("Received SIGTERM, shutting down gracefully...");
-    process.exit(0);
+    await gracefulShutdown();
 });
+
+async function gracefulShutdown() {
+    try {
+        // Close HTTP server if running
+        if (globalServer?.httpServer) {
+            console.log("Closing HTTP server...");
+            await new Promise<void>((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    reject(new Error('Server close timeout'));
+                }, 5000); // 5 second timeout
+                
+                globalServer!.httpServer!.close((error) => {
+                    clearTimeout(timeout);
+                    if (error) {
+                        console.error("Error closing HTTP server:", error);
+                        reject(error);
+                    } else {
+                        console.log("HTTP server closed successfully");
+                        resolve();
+                    }
+                });
+            });
+        }
+        
+        // Give a moment for cleanup
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        console.log("Graceful shutdown completed");
+        process.exit(0);
+    } catch (error) {
+        console.error("Error during graceful shutdown:", error);
+        process.exit(1);
+    }
+}
 
 // Always start the server - this is designed to be the main entry point
 main().catch((error) => {

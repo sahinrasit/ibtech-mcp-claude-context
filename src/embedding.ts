@@ -1,25 +1,27 @@
-import { OpenAIEmbedding, VoyageAIEmbedding, GeminiEmbedding, OllamaEmbedding } from "@zilliz/claude-context-core";
+import { VoyageAIEmbedding, GeminiEmbedding, OllamaEmbedding } from "@zilliz/claude-context-core";
 import { ContextMcpConfig } from "./config.js";
-
+import { IbthinkEmbedding } from "./ibthink-embedding.js";
+import { OpenAIEmbedding } from "./openai-embedding.js";
+ 
 // Helper function to create embedding instance based on provider
-export function createEmbeddingInstance(config: ContextMcpConfig): OpenAIEmbedding | VoyageAIEmbedding | GeminiEmbedding | OllamaEmbedding {
+export function createEmbeddingInstance(config: ContextMcpConfig): OpenAIEmbedding | VoyageAIEmbedding | GeminiEmbedding | OllamaEmbedding | IbthinkEmbedding {
     console.log(`[EMBEDDING] Creating ${config.embeddingProvider} embedding instance...`);
-
+ 
     switch (config.embeddingProvider) {
         case 'OpenAI':
-            if (!config.openaiApiKey) {
+            if (!config.openaiApiKey || config.openaiApiKey === 'placeholder') {
                 console.error(`[EMBEDDING] ❌ OpenAI API key is required but not provided`);
                 throw new Error('OPENAI_API_KEY is required for OpenAI embedding provider');
             }
-            console.log(`[EMBEDDING] 🔧 Configuring OpenAI with model: ${config.embeddingModel}`);
+            console.log(`[EMBEDDING] 🔧 Configuring custom OpenAI with model: ${config.embeddingModel}`);
             const openaiEmbedding = new OpenAIEmbedding({
                 apiKey: config.openaiApiKey,
                 model: config.embeddingModel,
                 ...(config.openaiBaseUrl && { baseURL: config.openaiBaseUrl })
             });
-            console.log(`[EMBEDDING] ✅ OpenAI embedding instance created successfully`);
+            console.log(`[EMBEDDING] ✅ Custom OpenAI embedding instance created successfully`);
             return openaiEmbedding;
-
+ 
         case 'VoyageAI':
             if (!config.voyageaiApiKey) {
                 console.error(`[EMBEDDING] ❌ VoyageAI API key is required but not provided`);
@@ -32,7 +34,7 @@ export function createEmbeddingInstance(config: ContextMcpConfig): OpenAIEmbeddi
             });
             console.log(`[EMBEDDING] ✅ VoyageAI embedding instance created successfully`);
             return voyageEmbedding;
-
+ 
         case 'Gemini':
             if (!config.geminiApiKey) {
                 console.error(`[EMBEDDING] ❌ Gemini API key is required but not provided`);
@@ -46,7 +48,7 @@ export function createEmbeddingInstance(config: ContextMcpConfig): OpenAIEmbeddi
             });
             console.log(`[EMBEDDING] ✅ Gemini embedding instance created successfully`);
             return geminiEmbedding;
-
+ 
         case 'Ollama':
             const ollamaHost = config.ollamaHost || 'http://127.0.0.1:11434';
             console.log(`[EMBEDDING] 🔧 Configuring Ollama with model: ${config.embeddingModel}, host: ${ollamaHost}`);
@@ -56,17 +58,31 @@ export function createEmbeddingInstance(config: ContextMcpConfig): OpenAIEmbeddi
             });
             console.log(`[EMBEDDING] ✅ Ollama embedding instance created successfully`);
             return ollamaEmbedding;
-
+ 
+        case 'Ibthink':
+            if (!config.ibthinkApiKey) {
+                console.error(`[EMBEDDING] ❌ Ibthink API key is required but not provided`);
+                throw new Error('IBTHINK_API_KEY is required for Ibthink embedding provider');
+            }
+            console.log(`[EMBEDDING] 🔧 Configuring Ibthink with model: ${config.embeddingModel}`);
+            const ibthinkEmbedding = new IbthinkEmbedding({
+                model: config.embeddingModel,
+                apiKey: config.ibthinkApiKey,
+                ...(config.ibthinkBaseUrl && { baseURL: config.ibthinkBaseUrl })
+            });
+            console.log(`[EMBEDDING] ✅ Ibthink embedding instance created successfully`);
+            return ibthinkEmbedding;
+ 
         default:
             console.error(`[EMBEDDING] ❌ Unsupported embedding provider: ${config.embeddingProvider}`);
             throw new Error(`Unsupported embedding provider: ${config.embeddingProvider}`);
     }
 }
-
-export function logEmbeddingProviderInfo(config: ContextMcpConfig, embedding: OpenAIEmbedding | VoyageAIEmbedding | GeminiEmbedding | OllamaEmbedding): void {
+ 
+export function logEmbeddingProviderInfo(config: ContextMcpConfig, embedding: OpenAIEmbedding | VoyageAIEmbedding | GeminiEmbedding | OllamaEmbedding | IbthinkEmbedding): void {
     console.log(`[EMBEDDING] ✅ Successfully initialized ${config.embeddingProvider} embedding provider`);
     console.log(`[EMBEDDING] Provider details - Model: ${config.embeddingModel}, Dimension: ${embedding.getDimension()}`);
-
+ 
     // Log provider-specific configuration details
     switch (config.embeddingProvider) {
         case 'OpenAI':
@@ -81,5 +97,9 @@ export function logEmbeddingProviderInfo(config: ContextMcpConfig, embedding: Op
         case 'Ollama':
             console.log(`[EMBEDDING] Ollama configuration - Host: ${config.ollamaHost || 'http://127.0.0.1:11434'}, Model: ${config.embeddingModel}`);
             break;
+        case 'Ibthink':
+            console.log(`[EMBEDDING] Ibthink configuration - API Key: ${config.ibthinkApiKey ? '✅ Provided' : '❌ Missing'}, Base URL: ${config.ibthinkBaseUrl || 'Default'}`);
+            break;
     }
-} 
+}
+ 
